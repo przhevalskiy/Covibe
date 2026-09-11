@@ -1,7 +1,7 @@
 {
-  "name": "@monolift/sdk",
+  "name": "@gantry/sdk",
   "version": "0.1.0",
-  "description": "Monolift TypeScript SDK — submit engineering tasks, get PRs back",
+  "description": "Gantry TypeScript SDK — submit engineering tasks, get PRs back",
   "main": "./dist/index.js",
   "module": "./dist/index.mjs",
   "types": "./dist/index.d.ts",
@@ -22,7 +22,7 @@
   "keywords": [
     "ai",
     "agents",
-    "monolift",
+    "gantry",
     "engineering"
   ],
   "license": "MIT",

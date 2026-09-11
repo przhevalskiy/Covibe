@@ -1,6 +1,7 @@
 import { create } from 'zustand';
 import { Message, MessageRole } from '@/shared/types';
 import { api } from '@/shared/services/api';
+import { persistDiscussionMessage } from '@/shared/gantry/discussionPersist';
 
 interface ChatState {
   messages: Message[];
@@ -24,7 +25,7 @@ interface ChatActions {
   startStream: () => void;
   appendToStream: (chunk: string) => void;
   setStreamIntent: (intent: string, label: string) => void;
-  finalizeStream: (messageId: string) => void;
+  finalizeStream: (messageId: string, discussionId?: string) => void;
   gracefulStop: (messageId: string, discussionId: string) => void;
   cancelStream: () => void;
   addChecklistMessage: (fields: Record<string, string>, intent: string, discussionId: string) => void;
@@ -125,7 +126,7 @@ export const useChatStore = create<ChatStore>((set, get) => ({
     set({ currentStreamIntent: { intent, label }, persistedIntent: { intent, label } });
   },
 
-  finalizeStream: (messageId: string) => {
+  finalizeStream: (messageId: string, discussionId?: string) => {
     const state = get();
 
     // If a checklist message already cleared the stream content,
@@ -153,6 +154,10 @@ export const useChatStore = create<ChatStore>((set, get) => ({
       currentStreamContent: '',
       currentStreamIntent: null,
     }));
+
+    if (discussionId) {
+      persistDiscussionMessage(discussionId, assistantMessage.content, 'assistant');
+    }
   },
 
   gracefulStop: (messageId: string, discussionId: string) => {

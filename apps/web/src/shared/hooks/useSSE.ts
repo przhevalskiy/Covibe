@@ -4,6 +4,9 @@ import { sseClient } from '@/shared/services/sse';
 import { useChatStore } from '@/features/chat';
 import { useDiscussionStore } from '@/features/discussions';
 import { approveFactoryHitl } from '@/shared/services/gantry/hitl';
+import { taskIdFromSubmittedEvent } from '@/shared/gantry/submittedEvent';
+import { persistDiscussionMessage } from '@/shared/gantry/discussionPersist';
+import { useWorkspaceStore } from '@/features/workspace';
 
 export function useSSE() {
   const navigate = useNavigate();
@@ -20,18 +23,19 @@ export function useSSE() {
     setSubmitted,
     setActiveTaskId,
   } = useChatStore();
-  const { activeDiscussionId, updateDiscussionTitle } = useDiscussionStore();
+  const { activeDiscussionId, updateDiscussionTitle, linkTaskToDiscussion } = useDiscussionStore();
 
   const sendMessage = useCallback(
-    async (content: string, discussionId?: string) => {
+    async (content: string, discussionId?: string, projectId?: string | null) => {
       let targetDiscussionId = discussionId || activeDiscussionId;
 
       if (!targetDiscussionId) {
         const { createDiscussion } = useDiscussionStore.getState();
-        const newDiscussion = await createDiscussion();
+        const newDiscussion = await createDiscussion(
+          projectId ? { project_id: projectId } : undefined,
+        );
         targetDiscussionId = newDiscussion.id;
         useChatStore.getState().skipNextMessageLoad();
-        navigate(`/chat/${targetDiscussionId}`, { replace: true });
       }
 
       const userMessage = {
@@ -41,6 +45,7 @@ export function useSSE() {
         timestamp: new Date().toISOString(),
       };
       addMessage(userMessage);
+      persistDiscussionMessage(targetDiscussionId, content, 'user');
 
       startStream();
       messageIdRef.current = crypto.randomUUID();
@@ -49,6 +54,7 @@ export function useSSE() {
         const stream = sseClient.streamChat({
           discussion_id: targetDiscussionId,
           message: content,
+          project_id: projectId,
         });
 
         for await (const event of stream) {
@@ -60,15 +66,22 @@ export function useSSE() {
             appendToStream(event.content);
           } else if (event.type === 'error') {
             appendToStream(event.error);
-            finalizeStream(messageIdRef.current);
+            finalizeStream(messageIdRef.current, targetDiscussionId);
             return;
           } else if (event.type === 'checklist') {
             addChecklistMessage(event.fields, event.intent, targetDiscussionId);
           } else if (event.type === 'submitted') {
+            const taskId = taskIdFromSubmittedEvent(event);
             setSubmitted(true);
-            setActiveTaskId(event.hive_task_id);
+            setActiveTaskId(taskId);
+            linkTaskToDiscussion(targetDiscussionId, taskId);
+            useWorkspaceStore.getState().hydrate();
+            finalizeStream(messageIdRef.current, targetDiscussionId);
+            sseClient.cancel();
+            navigate(`/runs/${taskId}`);
+            return;
           } else if (event.type === 'done') {
-            finalizeStream(messageIdRef.current);
+            finalizeStream(messageIdRef.current, targetDiscussionId);
             break;
           }
         }
@@ -90,6 +103,7 @@ export function useSSE() {
       setSubmitted,
       setActiveTaskId,
       updateDiscussionTitle,
+      linkTaskToDiscussion,
     ],
   );
 
@@ -105,6 +119,7 @@ export function useSSE() {
         role: 'user',
         timestamp: new Date().toISOString(),
       });
+      persistDiscussionMessage(targetDiscussionId, label, 'user');
 
       try {
         await approveFactoryHitl(targetDiscussionId, fields, approved);

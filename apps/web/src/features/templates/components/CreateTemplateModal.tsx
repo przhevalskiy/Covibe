@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { Modal } from '@/components/ui';
 import { Template } from '@/shared/types';
-import { useProjectStore } from '@/features/projects';
+import { useWorkspaceCatalogStore } from '@/features/projects';
 import { useTemplateStore } from '../store';
 import './CreateTemplateModal.css';
 
@@ -12,14 +12,16 @@ interface CreateTemplateModalProps {
 }
 
 export function CreateTemplateModal({ isOpen, onClose, template }: CreateTemplateModalProps) {
-  const { projects } = useProjectStore();
+  const { workspaces } = useWorkspaceCatalogStore();
   const { createTemplate, updateTemplate } = useTemplateStore();
   const isEdit = !!template;
 
   const [name, setName] = useState(template?.name ?? '');
   const [description, setDescription] = useState(template?.description ?? '');
   const [body, setBody] = useState(template?.body ?? '');
-  const [hubspaceId, setHubspaceId] = useState(template?.hubspace_id ?? '');
+  const [workspaceId, setWorkspaceId] = useState(
+    template?.workspace_id ?? template?.hubspace_id ?? '',
+  );
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -33,7 +35,7 @@ export function CreateTemplateModal({ isOpen, onClose, template }: CreateTemplat
       name: name.trim(),
       description: description.trim() || null,
       body: body.trim(),
-      hubspace_id: hubspaceId || null,
+      workspace_id: workspaceId || null,
     };
     try {
       if (isEdit && template) {
@@ -85,10 +87,10 @@ export function CreateTemplateModal({ isOpen, onClose, template }: CreateTemplat
         </label>
 
         <label className="ct-field">
-          <span className="ct-label">Target hubspace <span className="ct-hint">(optional — files the task & locks its type)</span></span>
-          <select className="ct-input" value={hubspaceId} onChange={e => setHubspaceId(e.target.value)}>
+          <span className="ct-label">Target workspace <span className="ct-hint">(optional)</span></span>
+          <select className="ct-input" value={workspaceId} onChange={e => setWorkspaceId(e.target.value)}>
             <option value="">None</option>
-            {projects.map(p => (
+            {workspaces.map(p => (
               <option key={p.id} value={p.id}>{p.name}</option>
             ))}
           </select>

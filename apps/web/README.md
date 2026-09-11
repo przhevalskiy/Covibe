@@ -38,7 +38,6 @@ Copy `.env.example` to `.env`. In production (Vercel), set:
 
 | Variable | Purpose |
 |----------|---------|
-| `VITE_GANTRY_PLATFORM` | `true` (default) — Gantry adapter |
 | `VITE_GANTRY_API_URL` | Public Gantry API origin, e.g. `https://api.example.com` |
 
 ## Verification

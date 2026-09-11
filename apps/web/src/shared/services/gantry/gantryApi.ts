@@ -17,9 +17,9 @@ import {
 import { gantryClient } from './client';
 import { discussionLocal } from './discussionLocal';
 import { templateLocal } from './templateLocal';
-import { toQodexProject, projectNotesLocal } from './projectMapper';
+import { toUiWorkspace, migrateLocalNotesIfNeeded } from './projectMapper';
 
-/** Qodex-shaped API surface backed by Gantry /v1 + local stores (M2). */
+/** UI-shaped API surface backed by Gantry /v1 + local stores (M2). */
 export class GantryApiService {
   async healthCheck() {
     const health = await gantryClient.health();
@@ -61,48 +61,86 @@ export class GantryApiService {
     return discussionLocal.addMessage(discussionId, content, role);
   }
 
-  async getProjects(): Promise<Project[]> {
-    const rows = await gantryClient.listProjects();
-    return rows.map(toQodexProject);
+  async getWorkspaces(): Promise<Project[]> {
+    const rows = await gantryClient.listWorkspaces();
+    const migrated = await Promise.all(
+      rows.map((row) =>
+        migrateLocalNotesIfNeeded(row, async (id, instructions) => {
+          await gantryClient.updateWorkspace(id, { instructions });
+        }),
+      ),
+    );
+    return migrated.map(toUiWorkspace);
   }
 
-  async getProject(id: string): Promise<Project> {
+  /** @deprecated Use getWorkspaces */
+  async getProjects(): Promise<Project[]> {
+    return this.getWorkspaces();
+  }
+
+  async getWorkspace(id: string): Promise<Project> {
     try {
-      const row = await gantryClient.getProject(id);
-      return toQodexProject(row);
+      let row = await gantryClient.getWorkspace(id);
+      row = await migrateLocalNotesIfNeeded(row, async (pid, instructions) => {
+        await gantryClient.updateWorkspace(pid, { instructions });
+      });
+      return toUiWorkspace(row);
     } catch {
-      const projects = await this.getProjects();
-      const row = projects.find(p => p.id === id);
-      if (!row) throw new Error('project not found');
+      const workspaces = await this.getWorkspaces();
+      const row = workspaces.find(w => w.id === id);
+      if (!row) throw new Error('workspace not found');
       return row;
     }
   }
 
-  async createProject(data: ProjectCreate): Promise<Project> {
-    const row = await gantryClient.createProject(data.name, data.github_url ?? undefined);
-    if (data.instructions) {
-      projectNotesLocal.set(row.id, data.instructions);
-    }
-    return toQodexProject(row);
+  /** @deprecated Use getWorkspace */
+  async getProject(id: string): Promise<Project> {
+    return this.getWorkspace(id);
   }
 
-  async updateProject(id: string, data: ProjectUpdate): Promise<Project> {
-    const row = await gantryClient.updateProject(id, {
+  async createWorkspace(data: ProjectCreate): Promise<Project> {
+    const row = await gantryClient.createWorkspace(data.name, {
+      github_url: data.github_url ?? undefined,
+      instructions: data.instructions ?? undefined,
+    });
+    return toUiWorkspace(row);
+  }
+
+  /** @deprecated Use createWorkspace */
+  async createProject(data: ProjectCreate): Promise<Project> {
+    return this.createWorkspace(data);
+  }
+
+  async updateWorkspace(id: string, data: ProjectUpdate): Promise<Project> {
+    const row = await gantryClient.updateWorkspace(id, {
       name: data.name,
       github_url: data.github_url ?? undefined,
+      instructions: data.instructions ?? undefined,
     });
-    if (data.instructions !== undefined) {
-      projectNotesLocal.set(id, data.instructions);
-    }
-    return toQodexProject(row);
+    return toUiWorkspace(row);
   }
 
-  async deleteProject(_id: string): Promise<void> {
-    throw new Error('Project delete is not available via public /v1/projects yet');
+  /** @deprecated Use updateWorkspace */
+  async updateProject(id: string, data: ProjectUpdate): Promise<Project> {
+    return this.updateWorkspace(id, data);
   }
 
-  async getProjectDiscussions(id: string): Promise<Discussion[]> {
+  async deleteWorkspace(_id: string): Promise<void> {
+    throw new Error('Workspace delete is not available via /v1/workspaces yet');
+  }
+
+  /** @deprecated Use deleteWorkspace */
+  async deleteProject(id: string): Promise<void> {
+    return this.deleteWorkspace(id);
+  }
+
+  async getWorkspaceDiscussions(id: string): Promise<Discussion[]> {
     return discussionLocal.list().filter(d => d.project_id === id);
+  }
+
+  /** @deprecated Use getWorkspaceDiscussions */
+  async getProjectDiscussions(id: string): Promise<Discussion[]> {
+    return this.getWorkspaceDiscussions(id);
   }
 
   async getProjectFiles(_projectId: string): Promise<ProjectFile[]> {

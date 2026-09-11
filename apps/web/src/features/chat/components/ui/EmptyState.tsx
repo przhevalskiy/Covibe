@@ -1,24 +1,37 @@
-import { Zap } from 'lucide-react';
+import { Link } from 'react-router-dom';
+import { RotatingText } from './RotatingText';
+import { useAuthStore } from '@/features/auth';
+import './EmptyState.css';
 
 export function EmptyState() {
-  return (
-    <div className="flex flex-col items-center justify-center flex-1 px-4 py-12">
-      {/* Logo */}
-      <div className="flex items-center justify-center w-16 h-16 mb-6 rounded-2xl bg-brand-100">
-        <Zap size={32} className="text-brand-600" />
-      </div>
+  const user = useAuthStore((s) => s.user);
+  const displayName = user?.user_metadata?.display_name || user?.email?.split('@')[0] || '';
+  const firstName = displayName.split(' ')[0];
 
-      {/* Greeting */}
-      <h1 className="text-xl font-semibold text-text-primary mb-2">
-        How can I help you today?
+  return (
+    <div className="empty-state">
+      {firstName && (
+        <p className="empty-state-greeting">Hi {firstName},</p>
+      )}
+
+      <h1 className="empty-state-title">
+        <RotatingText
+          texts={[
+            'Describe what to build from scratch.',
+            'Runs stream in the IDE with live HITL checkpoints.',
+          ]}
+          interval={4500}
+        />
       </h1>
-      <p className="text-text-secondary text-center max-w-md mb-8">
-        Select an AI provider below and ask me anything. I can help with coding, writing, analysis, and more.
+
+      <p className="empty-state-lead">
+        Each run starts in a project workspace — multiple runs can coordinate toward the same goal.
+        No repo link required to begin.
       </p>
 
-      {/* Provider hint */}
-      <p className="mt-8 text-xs text-text-tertiary">
-        Switch between AI providers using the toggles below to compare responses
+      <p className="empty-state-hint">
+        Use <strong>+</strong> for specs and run profile. Track runs under{' '}
+        <Link to="/runs">Runs</Link> or your active workspace.
       </p>
     </div>
   );

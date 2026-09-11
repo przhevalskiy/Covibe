@@ -2,37 +2,36 @@ import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { LayoutTemplate, Plus, Play, Pencil, Trash2, FolderKanban } from 'lucide-react';
 import { useAuthStore } from '@/features/auth';
-import { useProjectStore } from '@/features/projects';
-import { useDiscussionStore } from '@/features/discussions';
+import { useWorkspaceCatalogStore } from '@/features/projects';
+import { useWorkspaceStore } from '@/features/workspace';
 import { Template } from '@/shared/types';
 import { useTemplateStore } from '../store';
 import { CreateTemplateModal } from './CreateTemplateModal';
 import './TemplatesPage.css';
 
+function templateWorkspaceId(t: Template): string | null {
+  return t.workspace_id ?? t.hubspace_id ?? null;
+}
+
 export function TemplatesPage() {
   const navigate = useNavigate();
   const { user } = useAuthStore();
   const { templates, isLoading, fetchTemplates, deleteTemplate } = useTemplateStore();
-  const { projects, fetchProjects, getProjectById } = useProjectStore();
-  const { createDiscussion } = useDiscussionStore();
+  const { workspaces, fetchWorkspaces, getWorkspaceById } = useWorkspaceCatalogStore();
   const [showCreate, setShowCreate] = useState(false);
   const [editing, setEditing] = useState<Template | null>(null);
 
   useEffect(() => {
     if (user) {
       fetchTemplates();
-      if (projects.length === 0) fetchProjects();
+      if (workspaces.length === 0) fetchWorkspaces();
     }
-  }, [user, fetchTemplates, fetchProjects, projects.length]);
+  }, [user, fetchTemplates, fetchWorkspaces, workspaces.length]);
 
-  const handleUse = async (t: Template) => {
-    // Launch a task from the starter, optionally pre-filed under a hubspace.
-    if (t.hubspace_id) {
-      const created = await createDiscussion({ project_id: t.hubspace_id });
-      navigate(`/chat/${created.id}`, { state: { initialMessage: t.body } });
-    } else {
-      navigate('/chat', { state: { initialMessage: t.body } });
-    }
+  const handleUse = (t: Template) => {
+    const wsId = templateWorkspaceId(t);
+    if (wsId) useWorkspaceStore.getState().setActiveWorkspace(wsId);
+    navigate('/runs/new', { state: { initialMessage: t.body } });
   };
 
   return (
@@ -63,7 +62,8 @@ export function TemplatesPage() {
       ) : (
         <div className="templates-grid">
           {templates.map(t => {
-            const hub = t.hubspace_id ? getProjectById(t.hubspace_id) : undefined;
+            const wsId = templateWorkspaceId(t);
+            const workspace = wsId ? getWorkspaceById(wsId) : undefined;
             return (
               <div key={t.id} className="template-card">
                 <div className="template-card-icon"><LayoutTemplate size={20} /></div>
@@ -71,8 +71,8 @@ export function TemplatesPage() {
                   <h3 className="template-card-name">{t.name}</h3>
                   {t.description && <p className="template-card-desc">{t.description}</p>}
                   <p className="template-card-preview">{t.body}</p>
-                  {hub && (
-                    <span className="template-card-hub"><FolderKanban size={12} /> {hub.name}</span>
+                  {workspace && (
+                    <span className="template-card-hub"><FolderKanban size={12} /> {workspace.name}</span>
                   )}
                   <div className="template-card-actions">
                     <button className="template-use-btn" onClick={() => handleUse(t)}>

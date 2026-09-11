@@ -125,7 +125,7 @@ export function IdeFileExplorer({
         setFiles(data.files);
         setSource('github');
       } else {
-        const data = await gantryClient.projectWorkspaceTree(project.id);
+        const data = await gantryClient.workspaceFileTree(project.id);
         setFiles(data.files);
         setSource('workspace');
       }
@@ -149,7 +149,7 @@ export function IdeFileExplorer({
       const data = await gantryClient.projectGithubFile(project.id, rel, buildBranch ?? 'main');
       return data.content;
     }
-    const data = await gantryClient.projectWorkspaceFile(project.id, rel);
+    const data = await gantryClient.workspaceFileContent(project.id, rel);
     return data.content;
   }, [project.id, useGithub, buildBranch]);
 
@@ -214,7 +214,7 @@ export function IdeFileExplorer({
     if (!activeTab || !activeData || !canEdit) return;
     setSaving(true);
     try {
-      await gantryClient.saveProjectWorkspaceFile(project.id, activeTab, activeData.content);
+      await gantryClient.saveWorkspaceFile(project.id, activeTab, activeData.content);
       setTabs(prev => prev.map(t => (t.relPath === activeTab ? { ...t, dirty: false } : t)));
       await refreshTree();
     } catch (err) {

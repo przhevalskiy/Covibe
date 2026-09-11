@@ -1,4 +1,4 @@
-/** Project display helpers for Gantry hubspaces. */
+/** Workspace display helpers (API: /v1/workspaces). */
 
 export function projectRepoLabel(project: {
   github_url?: string | null;

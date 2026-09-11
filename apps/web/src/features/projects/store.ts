@@ -1,58 +1,63 @@
 import { create } from 'zustand';
-import { Project, ProjectCreate, ProjectUpdate, Discussion } from '@/shared/types';
+import {
+  Workspace,
+  WorkspaceCreate,
+  WorkspaceUpdate,
+  Discussion,
+} from '@/shared/types';
 import { api } from '@/shared/services/api';
 
-interface ProjectState {
-  projects: Project[];
+interface WorkspaceCatalogState {
+  workspaces: Workspace[];
   isLoading: boolean;
   error: string | null;
 }
 
-interface ProjectActions {
-  fetchProjects: () => Promise<void>;
-  createProject: (data: ProjectCreate) => Promise<Project>;
-  updateProject: (id: string, data: ProjectUpdate) => Promise<void>;
-  deleteProject: (id: string) => Promise<void>;
-  getProjectDiscussions: (id: string) => Promise<Discussion[]>;
-  getProjectById: (id: string) => Project | undefined;
+interface WorkspaceCatalogActions {
+  fetchWorkspaces: () => Promise<void>;
+  createWorkspace: (data: WorkspaceCreate) => Promise<Workspace>;
+  updateWorkspace: (id: string, data: WorkspaceUpdate) => Promise<void>;
+  deleteWorkspace: (id: string) => Promise<void>;
+  getWorkspaceDiscussions: (id: string) => Promise<Discussion[]>;
+  getWorkspaceById: (id: string) => Workspace | undefined;
   clearError: () => void;
   reset: () => void;
 }
 
-type ProjectStore = ProjectState & ProjectActions;
+type WorkspaceCatalogStore = WorkspaceCatalogState & WorkspaceCatalogActions;
 
-export const useProjectStore = create<ProjectStore>((set, get) => ({
-  projects: [],
+export const useWorkspaceCatalogStore = create<WorkspaceCatalogStore>((set, get) => ({
+  workspaces: [],
   isLoading: false,
   error: null,
 
-  fetchProjects: async () => {
+  fetchWorkspaces: async () => {
     set({ isLoading: true, error: null });
     try {
-      const projects = await api.getProjects();
-      set({ projects, isLoading: false });
+      const workspaces = await api.getWorkspaces();
+      set({ workspaces, isLoading: false });
     } catch (error) {
       set({ error: (error as Error).message, isLoading: false });
     }
   },
 
-  createProject: async (data: ProjectCreate) => {
+  createWorkspace: async (data: WorkspaceCreate) => {
     set({ isLoading: true, error: null });
     try {
-      const project = await api.createProject(data);
-      set(state => ({ projects: [project, ...state.projects], isLoading: false }));
-      return project;
+      const workspace = await api.createWorkspace(data);
+      set(state => ({ workspaces: [workspace, ...state.workspaces], isLoading: false }));
+      return workspace;
     } catch (error) {
       set({ error: (error as Error).message, isLoading: false });
       throw error;
     }
   },
 
-  updateProject: async (id: string, data: ProjectUpdate) => {
+  updateWorkspace: async (id: string, data: WorkspaceUpdate) => {
     try {
-      const updated = await api.updateProject(id, data);
+      const updated = await api.updateWorkspace(id, data);
       set(state => ({
-        projects: state.projects.map(p => (p.id === id ? updated : p)),
+        workspaces: state.workspaces.map(w => (w.id === id ? updated : w)),
       }));
     } catch (error) {
       set({ error: (error as Error).message });
@@ -60,12 +65,12 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
     }
   },
 
-  deleteProject: async (id: string) => {
+  deleteWorkspace: async (id: string) => {
     set({ isLoading: true, error: null });
     try {
-      await api.deleteProject(id);
+      await api.deleteWorkspace(id);
       set(state => ({
-        projects: state.projects.filter(p => p.id !== id),
+        workspaces: state.workspaces.filter(w => w.id !== id),
         isLoading: false,
       }));
     } catch (error) {
@@ -74,13 +79,16 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
     }
   },
 
-  getProjectDiscussions: async (id: string) => {
-    return api.getProjectDiscussions(id);
+  getWorkspaceDiscussions: async (id: string) => {
+    return api.getWorkspaceDiscussions(id);
   },
 
-  getProjectById: (id: string) => get().projects.find(p => p.id === id),
+  getWorkspaceById: (id: string) => get().workspaces.find(w => w.id === id),
 
   clearError: () => set({ error: null }),
 
-  reset: () => set({ projects: [], isLoading: false, error: null }),
+  reset: () => set({ workspaces: [], isLoading: false, error: null }),
 }));
+
+/** @deprecated Use useWorkspaceCatalogStore */
+export const useProjectStore = useWorkspaceCatalogStore;

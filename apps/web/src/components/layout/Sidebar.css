@@ -122,6 +122,22 @@
   color: var(--brand-600);
 }
 
+.sidebar-nav-link.active {
+  background-color: var(--gray-100);
+  color: var(--brand-600);
+  font-weight: 600;
+}
+
+.sidebar-list-label {
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--gray-400);
+  margin: 12px 8px 4px;
+  padding: 0;
+}
+
 .sidebar.collapsed .sidebar-nav-link {
   justify-content: center;
   padding: 10px;

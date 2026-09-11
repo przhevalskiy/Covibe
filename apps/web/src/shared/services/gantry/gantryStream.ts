@@ -59,15 +59,31 @@ function mapEvent(raw: GantryEvent): SSEEvent | null {
   }
 }
 
-export async function* streamGantryTask(taskId: string): AsyncGenerator<SSEEvent, void, unknown> {
+export type StreamGantryTaskOptions = {
+  signal?: AbortSignal;
+};
+
+export async function* streamGantryTask(
+  taskId: string,
+  options?: StreamGantryTaskOptions,
+): AsyncGenerator<SSEEvent, void, unknown> {
+  const signal = options?.signal;
   const key = getApiKey();
   const base = gantryBaseUrl();
-  const response = await fetch(`${base}/v1/tasks/${encodeURIComponent(taskId)}/events`, {
-    headers: {
-      Accept: 'text/event-stream',
-      ...(key ? { Authorization: `Bearer ${key}` } : {}),
-    },
-  });
+  let response: Response;
+  try {
+    response = await fetch(`${base}/v1/tasks/${encodeURIComponent(taskId)}/events`, {
+      headers: {
+        Accept: 'text/event-stream',
+        ...(key ? { Authorization: `Bearer ${key}` } : {}),
+      },
+      signal,
+    });
+  } catch (error) {
+    if ((error as Error).name === 'AbortError') return;
+    yield { type: 'error', error: (error as Error).message, provider: 'gantry' } as SSEEvent;
+    return;
+  }
 
   if (!response.ok) {
     const error = await response.json().catch(() => ({ detail: 'Stream failed' }));
@@ -85,6 +101,10 @@ export async function* streamGantryTask(taskId: string): AsyncGenerator<SSEEvent
   let buffer = '';
 
   while (true) {
+    if (signal?.aborted) {
+      await reader.cancel().catch(() => {});
+      return;
+    }
     const { done, value } = await reader.read();
     if (done) break;
 

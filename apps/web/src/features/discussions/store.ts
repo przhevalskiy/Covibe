@@ -18,6 +18,7 @@ interface DiscussionActions {
   activateDiscussion: (id: string) => Promise<void>;
   updateDiscussionTitle: (id: string, title: string) => Promise<void>;
   moveDiscussionToProject: (id: string, projectId: string | null) => Promise<void>;
+  linkTaskToDiscussion: (discussionId: string, taskId: string) => void;
   getActiveDiscussion: () => Discussion | undefined;
   clearError: () => void;
   reset: () => void;
@@ -118,6 +119,14 @@ export const useDiscussionStore = create<DiscussionStore>((set, get) => ({
     } catch (error) {
       set({ error: (error as Error).message });
     }
+  },
+
+  linkTaskToDiscussion: (discussionId: string, taskId: string) => {
+    set(state => ({
+      discussions: state.discussions.map(d =>
+        d.id === discussionId ? { ...d, task_id: taskId, updated_at: new Date().toISOString() } : d
+      ),
+    }));
   },
 
   getActiveDiscussion: () => {

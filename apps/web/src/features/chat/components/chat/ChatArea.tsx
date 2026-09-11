@@ -3,13 +3,12 @@ import { Link } from 'react-router-dom';
 import { ArrowUpRight, X, Wrench, GitBranch, Layers, BookOpen, MessageCircle } from 'lucide-react';
 import { useChatStore } from '../../store';
 import { useDiscussionStore } from '@/features/discussions';
-import { useAuthStore } from '@/features/auth';
 import { useSSE } from '@/shared/hooks/useSSE';
 import { FACTORY_STARTERS } from '@/shared/constants/factoryStarters';
 import { ChatMessage } from './ChatMessage';
 import { ChatInput } from './ChatInput';
 import { ChatHeader } from './ChatHeader';
-import { RotatingText } from '../ui/RotatingText';
+import { EmptyState } from '../ui/EmptyState';
 import { ThinkingIndicator } from '../ui/ThinkingIndicator';
 import './ChatArea.css';
 
@@ -291,29 +290,6 @@ function QuickActions({ onSelectAction, onHoverPrompt }: QuickActionsProps) {
           </div>
         </div>
       )}
-    </div>
-  );
-}
-
-function EmptyState() {
-  const user = useAuthStore((s) => s.user);
-  const displayName = user?.user_metadata?.display_name || user?.email?.split('@')[0] || '';
-  const firstName = displayName.split(' ')[0];
-
-  return (
-    <div className="empty-state">
-      {firstName && (
-        <p className="empty-state-greeting">Hi {firstName},</p>
-      )}
-      <h1 className="empty-state-title">
-        <RotatingText
-          texts={[
-            'Describe a scoped goal for your repo.',
-            'Gantry runs the pipeline and opens a PR.',
-          ]}
-          interval={4500}
-        />
-      </h1>
     </div>
   );
 }

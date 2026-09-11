@@ -34,7 +34,8 @@ export interface DiscussionUpdate {
   project_id?: string | null;
 }
 
-export interface Project {
+/** Workspace — canonical domain term (API: /v1/workspaces, DB: projects). */
+export interface Workspace {
   id: string;
   name: string;
   repo_path?: string | null;
@@ -46,12 +47,17 @@ export interface Project {
   locked_service_type?: string | null;
   icon?: string | null;
   color?: string | null;
+  parent_workspace_id?: string | null;
+  /** @deprecated DB field name — use parent_workspace_id in new code */
   parent_project_id?: string | null;
   created_at: string;
   updated_at: string;
 }
 
-export interface ProjectCreate {
+/** @deprecated Use Workspace */
+export type Project = Workspace;
+
+export interface WorkspaceCreate {
   name: string;
   github_url?: string | null;
   instructions?: string | null;
@@ -59,10 +65,13 @@ export interface ProjectCreate {
   locked_service_type?: string | null;
   icon?: string | null;
   color?: string | null;
-  parent_project_id?: string | null;
+  parent_workspace_id?: string | null;
 }
 
-export interface ProjectUpdate {
+/** @deprecated Use WorkspaceCreate */
+export type ProjectCreate = WorkspaceCreate;
+
+export interface WorkspaceUpdate {
   name?: string;
   github_url?: string | null;
   instructions?: string | null;
@@ -70,8 +79,11 @@ export interface ProjectUpdate {
   locked_service_type?: string | null;
   icon?: string | null;
   color?: string | null;
-  parent_project_id?: string | null;
+  parent_workspace_id?: string | null;
 }
+
+/** @deprecated Use WorkspaceUpdate */
+export type ProjectUpdate = WorkspaceUpdate;
 
 export interface ProjectFile {
   id: string;
@@ -87,6 +99,8 @@ export interface Template {
   name: string;
   description?: string | null;
   body: string;
+  workspace_id?: string | null;
+  /** @deprecated Use workspace_id */
   hubspace_id?: string | null;
   icon?: string | null;
   color?: string | null;
@@ -98,15 +112,59 @@ export interface TemplateCreate {
   name: string;
   description?: string | null;
   body: string;
+  workspace_id?: string | null;
+  /** @deprecated Use workspace_id */
   hubspace_id?: string | null;
   icon?: string | null;
   color?: string | null;
+}
+
+/** Playbook / Skill — org-scoped run config overlay (API: /v1/playbooks). */
+export interface PlaybookConfig {
+  vertical?: string | null;
+  tier_default?: number;
+  branch_prefix?: string;
+  goal_prefix?: string;
+  pipeline?: {
+    max_parallel_tracks?: number;
+    max_heal_cycles?: number;
+  };
+  architect_overlay?: string | null;
+  inspector_overlay?: string | null;
+  qa_commands?: Record<string, string>;
+  oracle?: {
+    inspector_overlay?: string;
+    qa_commands?: Record<string, string>;
+  };
+}
+
+export interface Playbook {
+  id: string;
+  org_id: string;
+  slug: string;
+  label: string;
+  description?: string | null;
+  config: PlaybookConfig;
+  workspace_id?: string | null;
+  is_system?: boolean;
+  created_at?: string | null;
+  updated_at?: string | null;
+}
+
+export interface PlaybookCreate {
+  label: string;
+  slug?: string | null;
+  description?: string | null;
+  workspace_id?: string | null;
+  config: PlaybookConfig;
 }
 
 export interface TemplateUpdate {
   name?: string;
   description?: string | null;
   body?: string;
+  workspace_id?: string | null;
+  /** @deprecated Use workspace_id */
   hubspace_id?: string | null;
   icon?: string | null;
   color?: string | null;
@@ -115,6 +173,8 @@ export interface TemplateUpdate {
 export interface ChatRequest {
   discussion_id: string;
   message: string;
+  /** Hubspace override from run composer (Gantry). */
+  project_id?: string | null;
   temperature?: number;
   max_tokens?: number;
 }
@@ -157,7 +217,10 @@ export interface SSEChecklistEvent {
 
 export interface SSESubmittedEvent {
   type: 'submitted';
-  hive_task_id: string;
+  /** Canonical Gantry task id after POST /v1/tasks. */
+  task_id: string;
+  /** @deprecated Legacy alias — prefer task_id. */
+  hive_task_id?: string;
   message: string;
 }
 

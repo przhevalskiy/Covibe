@@ -1,0 +1,49 @@
+.compose-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 8px;
+  padding: 0 2px;
+}
+
+.compose-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 4px 10px;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--gray-700);
+  background: var(--gray-50);
+  border: 1px solid var(--gray-200);
+  border-radius: 999px;
+  max-width: 100%;
+}
+
+.compose-chip-hub {
+  color: var(--brand-700);
+  background: var(--brand-50, #f0f7ff);
+  border-color: var(--brand-200, #bfdbfe);
+}
+
+.compose-chip-spec {
+  padding-right: 6px;
+}
+
+.compose-chip-remove {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  margin-left: 2px;
+  border: none;
+  background: transparent;
+  color: var(--gray-500);
+  cursor: pointer;
+  border-radius: 4px;
+}
+
+.compose-chip-remove:hover {
+  color: var(--gray-800);
+  background: var(--gray-200);
+}

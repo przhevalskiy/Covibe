@@ -20,7 +20,7 @@ export const DISABLEABLE_AGENTS = [
 
 const DEFAULTS: PipelineDefaults = {
   tier: -1,
-  playbook: 'platform-backlog',
+  playbook: '',
   disable_agents: [],
 };
 

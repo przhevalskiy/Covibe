@@ -1,28 +1,28 @@
 import { useState, useEffect, useCallback, useMemo } from 'react';
 import { Modal } from '@/components/ui';
-import { Project } from '@/shared/types';
+import { Workspace } from '@/shared/types';
 import { gantryClient, type GithubRepoSummary } from '@/shared/services/gantry/client';
 import { getGithubToken } from '@/shared/services/gantry/userSettings';
-import { useProjectStore } from '../store';
+import { useWorkspaceCatalogStore } from '../store';
 import './CreateProjectModal.css';
 
 type RepoMode = 'greenfield' | 'link' | 'browse';
 
-interface CreateProjectModalProps {
+interface CreateWorkspaceModalProps {
   isOpen: boolean;
   onClose: () => void;
-  onCreated?: (project: Project) => void;
-  project?: Project;
+  onCreated?: (workspace: Workspace) => void;
+  workspace?: Workspace;
 }
 
-export function CreateProjectModal({ isOpen, onClose, onCreated, project }: CreateProjectModalProps) {
-  const { createProject, updateProject } = useProjectStore();
-  const isEdit = !!project;
+export function CreateWorkspaceModal({ isOpen, onClose, onCreated, workspace }: CreateWorkspaceModalProps) {
+  const { createWorkspace, updateWorkspace } = useWorkspaceCatalogStore();
+  const isEdit = !!workspace;
 
-  const [name, setName] = useState(project?.name ?? '');
-  const [mode, setMode] = useState<RepoMode>(project?.github_url ? 'link' : 'greenfield');
-  const [githubUrl, setGithubUrl] = useState(project?.github_url ?? '');
-  const [notes, setNotes] = useState(project?.instructions ?? '');
+  const [name, setName] = useState(workspace?.name ?? '');
+  const [mode, setMode] = useState<RepoMode>(workspace?.github_url ? 'link' : 'greenfield');
+  const [githubUrl, setGithubUrl] = useState(workspace?.github_url ?? '');
+  const [notes, setNotes] = useState(workspace?.instructions ?? '');
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [repoSearch, setRepoSearch] = useState('');
@@ -33,14 +33,14 @@ export function CreateProjectModal({ isOpen, onClose, onCreated, project }: Crea
 
   useEffect(() => {
     if (!isOpen) return;
-    setName(project?.name ?? '');
-    setGithubUrl(project?.github_url ?? '');
-    setNotes(project?.instructions ?? '');
-    setMode(project?.github_url ? 'link' : 'greenfield');
+    setName(workspace?.name ?? '');
+    setGithubUrl(workspace?.github_url ?? '');
+    setNotes(workspace?.instructions ?? '');
+    setMode(workspace?.github_url ? 'link' : 'greenfield');
     setError(null);
     setSelectedRepo(null);
     setRepoSearch('');
-  }, [isOpen, project]);
+  }, [isOpen, workspace]);
 
   const loadRepos = useCallback(async (q: string) => {
     setReposLoading(true);
@@ -74,7 +74,7 @@ export function CreateProjectModal({ isOpen, onClose, onCreated, project }: Crea
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!name.trim()) {
-      setError('Please give the hubspace a name.');
+      setError('Please give the workspace a name.');
       return;
     }
     if (mode === 'link' && !githubUrl.trim()) {
@@ -93,11 +93,11 @@ export function CreateProjectModal({ isOpen, onClose, onCreated, project }: Crea
       instructions: notes.trim() || null,
     };
     try {
-      if (isEdit && project) {
-        await updateProject(project.id, payload);
+      if (isEdit && workspace) {
+        await updateWorkspace(workspace.id, payload);
         onClose();
       } else {
-        const created = await createProject(payload);
+        const created = await createWorkspace(payload);
         onCreated?.(created);
         onClose();
       }
@@ -109,8 +109,13 @@ export function CreateProjectModal({ isOpen, onClose, onCreated, project }: Crea
   };
 
   return (
-    <Modal isOpen={isOpen} onClose={onClose} title={isEdit ? 'Edit hubspace' : 'New hubspace'} size="md">
-      <form className="create-project-form" onSubmit={handleSubmit}>
+    <Modal
+      isOpen={isOpen}
+      onClose={onClose}
+      title={isEdit ? 'Edit workspace' : 'New workspace'}
+      size="md"
+    >
+      <form className="create-workspace-form" onSubmit={handleSubmit}>
         <label className="cp-field">
           <span className="cp-label">Name</span>
           <input
@@ -217,7 +222,7 @@ export function CreateProjectModal({ isOpen, onClose, onCreated, project }: Crea
             className="cp-input cp-textarea"
             value={notes}
             onChange={e => setNotes(e.target.value)}
-            placeholder="Default goals, conventions, or context for runs in this hubspace."
+            placeholder="Default goals, conventions, or context for runs in this workspace."
             rows={4}
           />
         </label>
@@ -229,7 +234,7 @@ export function CreateProjectModal({ isOpen, onClose, onCreated, project }: Crea
             Cancel
           </button>
           <button type="submit" className="cp-btn cp-btn-primary" disabled={submitting}>
-            {submitting ? 'Saving…' : isEdit ? 'Save changes' : 'Create hubspace'}
+            {submitting ? 'Saving…' : isEdit ? 'Save changes' : 'Create workspace'}
           </button>
         </div>
       </form>

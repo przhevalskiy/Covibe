@@ -7,7 +7,7 @@ import ExportDropdown from '../ui/ExportDropdown';
 import { useChatStore } from '../../store';
 import { useAttachmentStore } from '@/features/attachments/store';
 import { useDiscussionStore } from '@/features/discussions';
-import { useProjectStore } from '@/features/projects';
+import { useWorkspaceCatalogStore } from '@/features/projects';
 import './ChatHeader.css';
 
 interface ChatHeaderProps {
@@ -21,10 +21,10 @@ export function ChatHeader({ discussionId, discussionTitle }: ChatHeaderProps) {
   const { messages } = useChatStore();
   const { attachments, fetchAttachments, reset } = useAttachmentStore();
   const { discussions } = useDiscussionStore();
-  const { getProjectById } = useProjectStore();
+  const { getWorkspaceById } = useWorkspaceCatalogStore();
 
   const discussion = discussions.find((d) => d.id === discussionId);
-  const project = discussion?.project_id ? getProjectById(discussion.project_id) : undefined;
+  const workspace = discussion?.project_id ? getWorkspaceById(discussion.project_id) : undefined;
 
   useEffect(() => {
     reset();
@@ -36,14 +36,14 @@ export function ChatHeader({ discussionId, discussionTitle }: ChatHeaderProps) {
   return (
     <>
       <div className="chat-header">
-        {project && (
+        {workspace && (
           <button
             className="chat-header-breadcrumb"
-            onClick={() => navigate(`/hubspaces/${project.id}`)}
-            title="Back to hubspace"
+            onClick={() => navigate(`/workspaces/${workspace.id}`)}
+            title="Back to workspace"
           >
             <FolderKanban size={14} />
-            <span>{project.name}</span>
+            <span>{workspace.name}</span>
           </button>
         )}
         <div className="chat-header-actions">

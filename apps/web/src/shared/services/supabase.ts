@@ -1,6 +1,4 @@
 import { createClient, type SupabaseClient } from '@supabase/supabase-js';
-import { GANTRY_PLATFORM } from './gantry/config';
-
 const supabaseUrl = import.meta.env.VITE_SUPABASE_URL as string | undefined;
 const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY as string | undefined;
 
@@ -45,19 +43,16 @@ const authStorage = {
 
 function createSupabase(): SupabaseClient {
   if (!supabaseUrl || !supabaseAnonKey) {
-    if (GANTRY_PLATFORM) {
-      return {
-        auth: {
-          getSession: async () => ({ data: { session: null }, error: null }),
-          onAuthStateChange: () => ({ data: { subscription: { unsubscribe: () => {} } } }),
-          signUp: async () => ({ data: { user: null, session: null }, error: null }),
-          signInWithPassword: async () => ({ data: { user: null, session: null }, error: null }),
-          signOut: async () => ({ error: null }),
-          updateUser: async () => ({ data: { user: null }, error: null }),
-        },
-      } as unknown as SupabaseClient;
-    }
-    throw new Error('Missing VITE_SUPABASE_URL or VITE_SUPABASE_ANON_KEY env vars');
+    return {
+      auth: {
+        getSession: async () => ({ data: { session: null }, error: null }),
+        onAuthStateChange: () => ({ data: { subscription: { unsubscribe: () => {} } } }),
+        signUp: async () => ({ data: { user: null, session: null }, error: null }),
+        signInWithPassword: async () => ({ data: { user: null, session: null }, error: null }),
+        signOut: async () => ({ error: null }),
+        updateUser: async () => ({ data: { user: null }, error: null }),
+      },
+    } as unknown as SupabaseClient;
   }
   return createClient(supabaseUrl, supabaseAnonKey, {
     auth: { storage: authStorage },
