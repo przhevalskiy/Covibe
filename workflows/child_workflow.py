@@ -4,8 +4,8 @@ Durable child workflows for human-in-the-loop checkpoints.
 ApprovalWorkflow  — approve/reject a checkpoint (boolean signal).
 ClarificationWorkflow — collect text answers to PM questions (dict signal).
 
-Both are spawned by PMAgent / SwarmOrchestrator and signalled via the
-/api/tasks/[taskId]/signal Next.js route.
+Both are spawned by PMAgent / SwarmOrchestrator and signalled via
+POST /v1/tasks/{id}/hitl on the Gantry API.
 """
 import asyncio
 from datetime import timedelta

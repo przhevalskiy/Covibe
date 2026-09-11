@@ -3,7 +3,7 @@ from fastapi import APIRouter, Depends, HTTPException
 
 from api.config import AGENTEX_BASE_URL, AGENT_NAME
 from api.deps import require_scope
-from project.schema.crew import (
+from schemas.crew import (
     FOREMAN_ACP_NAME,
     catalog_payload,
     get_agent,

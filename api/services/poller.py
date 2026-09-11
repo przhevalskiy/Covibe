@@ -1,6 +1,5 @@
 """Background task: poll Agentex for lifecycle + terminal webhooks."""
 import asyncio
-import re
 
 import structlog
 
@@ -11,32 +10,13 @@ from api.repositories import projects as projects_repo
 from api.repositories import tasks as tasks_repo
 from api.services import github_tokens
 from api.services import task_events
+from api.services.task_results import resolve_terminal_result
 
 log = structlog.get_logger(__name__)
 
 POLL_INTERVAL = 10  # seconds
 TERMINAL_STATUSES = {"completed", "failed", "cancelled", "terminated", "timeout"}
 INTERMEDIATE_STATUSES = {"running", "waiting_approval"}
-
-
-def _extract_pr_url(messages: list[dict]) -> str | None:
-    for msg in reversed(messages):
-        content = msg.get("content", "")
-        if isinstance(content, str) and "/pull/" in content:
-            match = re.search(r"https://github\.com/\S+/pull/\d+", content)
-            if match:
-                return match.group(0)
-    return None
-
-
-def _extract_branch(messages: list[dict], task_id: str) -> str | None:
-    for msg in reversed(messages):
-        content = msg.get("content", "")
-        if isinstance(content, str):
-            match = re.search(rf"branch[:\s]+(\S*{re.escape(task_id[:8])}\S*)", content, re.I)
-            if match:
-                return match.group(1)
-    return None
 
 
 async def _handle_github_callback(task_id: str, meta: dict, status: str, pr_url: str | None) -> None:
@@ -88,6 +68,7 @@ async def _poll_task(task_id: str, meta: dict) -> None:
 
     status = task.get("status", "")
     meta = await tasks_repo.get_task_meta(task_id) or meta
+    org_id = meta.get("org_id")
 
     if status in INTERMEDIATE_STATUSES:
         await task_events.emit_for_agentex_status(task_id, meta, status)
@@ -98,15 +79,22 @@ async def _poll_task(task_id: str, meta: dict) -> None:
     if status not in TERMINAL_STATUSES:
         return
 
-    pr_url = None
-    branch = None
+    structured = await resolve_terminal_result(task_id, org_id=org_id)
     messages: list[dict] = []
-    try:
-        messages = await agentex_client.get_messages(task_id)
-        pr_url = _extract_pr_url(messages)
-        branch = _extract_branch(messages, task_id)
-    except Exception:
-        pass
+
+    if not structured.get("pr_url") or not structured.get("branch"):
+        try:
+            messages = await agentex_client.get_messages(task_id)
+            structured = await resolve_terminal_result(
+                task_id,
+                org_id=org_id,
+                messages=messages,
+            )
+        except Exception:
+            pass
+
+    pr_url = structured.get("pr_url")
+    branch = structured.get("branch")
 
     await tasks_repo.update_task_status(task_id, status=status, pr_url=pr_url, branch=branch)
     meta = await tasks_repo.get_task_meta(task_id) or meta
@@ -114,16 +102,18 @@ async def _poll_task(task_id: str, meta: dict) -> None:
     meta["branch"] = branch or meta.get("branch")
 
     project_id = meta.get("project_id")
-    org_id = meta.get("org_id")
-    if project_id:
+    if project_id and structured:
         await builds_repo.upsert_build(
             task_id=task_id,
             project_id=project_id,
             org_id=org_id,
             branch=branch,
             pr_url=pr_url,
+            quality_score=structured.get("quality_score"),
             status=status.upper() if status == "completed" else status,
-            tier=meta.get("tier"),
+            tier=meta.get("tier") or structured.get("tier"),
+            heal_cycles=structured.get("heal_cycles"),
+            files_changed=structured.get("files_changed"),
             result={"pr_url": pr_url, "branch": branch} if pr_url or branch else None,
         )
 
@@ -139,10 +129,10 @@ async def _poll_task(task_id: str, meta: dict) -> None:
 async def run_poller() -> None:
     log.info("poller_started", interval=POLL_INTERVAL)
     while True:
+        try:
+            pending = await tasks_repo.pending_tasks()
+            for task_id, meta in pending:
+                await _poll_task(task_id, meta)
+        except Exception as exc:
+            log.error("poller_loop_error", error=str(exc))
         await asyncio.sleep(POLL_INTERVAL)
-        pending = await tasks_repo.pending_tasks()
-        if pending:
-            await asyncio.gather(
-                *[_poll_task(tid, meta) for tid, meta in pending],
-                return_exceptions=True,
-            )

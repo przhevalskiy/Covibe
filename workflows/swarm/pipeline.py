@@ -1,0 +1,1228 @@
+"""
+Swarm pipeline — PM → Architect → Builders → Inspector → Reviewer → Security → DevOps.
+
+Extracted from workflows/swarm_orchestrator.py. Invoked by the Foreman workflow only.
+"""
+from __future__ import annotations
+
+import asyncio
+import json
+from dataclasses import dataclass, field
+from datetime import timedelta
+from pathlib import Path
+from typing import Any, Awaitable, Callable
+
+import structlog
+from temporalio import workflow
+from temporalio.common import RetryPolicy
+
+from agentex.lib import adk
+from agentex.types.text_content import TextContent
+
+from workflows.swarm.track_manager import (
+    _extract_tracks,
+    _merge_build_results,
+    _order_tracks_by_deps,
+    _resolve_track_conflicts,
+    _track_plan,
+)
+from workflows.swarm.healing import _parse_failing_tests
+from workflows.swarm.state import build_manifest
+from workflows.swarm.reporting import _build_final_report, format_quality_comment
+from workflows.swarm.completion import build_episode_record
+
+from workflows.agents.architect import ArchitectAgent
+from workflows.agents.builder import BuilderAgent
+from workflows.agents.devops import DevOpsAgent
+from workflows.agents.inspector import InspectorAgent
+from workflows.agents.pm import PMAgent
+from workflows.agents.reviewer import ReviewerAgent
+from workflows.agents.security import SecurityAgent
+
+from project.llm_runtime import extract_agentex_llm_params, model_for_tier
+from project.schema.complexity import TIER_LABELS
+from project.schema.playbooks import (
+    architect_prompt_overlay,
+    inspector_prompt_overlay,
+    playbook_oracle_qa_commands,
+)
+
+log = structlog.get_logger(__name__)
+
+PM_TIMEOUT = timedelta(hours=50)
+ARCHITECT_TIMEOUT = timedelta(minutes=10)
+BUILDER_TIMEOUT = timedelta(minutes=30)
+INSPECTOR_TIMEOUT = timedelta(minutes=15)
+REVIEWER_TIMEOUT = timedelta(minutes=8)
+SECURITY_TIMEOUT = timedelta(minutes=10)
+DEVOPS_TIMEOUT = timedelta(minutes=10)
+
+SyncTaskMeta = Callable[[str, dict], Awaitable[None]]
+HitlCheckpoint = Callable[..., Awaitable[bool]]
+
+
+def branch_name(task_id: str, prefix: str = "swarm") -> str:
+    import re
+    safe = re.sub(r"[^a-zA-Z0-9\-]", "-", task_id)[:40]
+    return f"{prefix}/{safe}"
+
+
+def model_for_tier_from_params(tier: int, task_params: dict | None) -> str:
+    creds = extract_agentex_llm_params(task_params)
+    return model_for_tier(tier, creds)
+
+
+@dataclass
+class PipelineContext:
+    """Mutable workflow state shared with the Foreman."""
+
+    manifest: dict = field(default_factory=lambda: {"version": 1, "tracks": [], "completed_edits": []})
+    conversation_history: list[dict] = field(default_factory=list)
+
+
+async def run_swarm_pipeline(
+    ctx: PipelineContext,
+    *,
+    sync_task_meta: SyncTaskMeta,
+    hitl_checkpoint: HitlCheckpoint,
+    task_id: str,
+    goal: str,
+    repo_path: str,
+    branch: str,
+    branch_prefix: str,
+    max_heal: int,
+    lightweight_mode: bool,
+    max_parallel_tracks: int,
+    task_queue: str,
+    iteration: int,
+    tier: int,
+    project_id: str = "",
+    disable_agents: set | None = None,
+    playbook: str | None = None,
+    task_params: dict | None = None,
+) -> str:
+    branch = branch_name(f"{task_id}-r{iteration}", branch_prefix)
+    disabled = disable_agents or set()
+    playbook_spec = (task_params or {}).get("playbook_spec") if task_params else None
+    architect_overlay = architect_prompt_overlay(playbook, playbook_spec)
+    inspector_overlay = inspector_prompt_overlay(playbook, playbook_spec)
+    playbook_qa = playbook_oracle_qa_commands(playbook, playbook_spec)
+
+    await adk.messages.create(
+        task_id=task_id,
+        content=TextContent(
+            author="agent",
+            content=(
+                f"Swarm Factory {'activated' if iteration == 0 else f're-activated (follow-up #{iteration})'}.\n"
+                f"Goal: {goal[:120]}\n"
+                f"Repo: {repo_path} | Branch: {branch}"
+            ),
+        ),
+    )
+
+    # ── Step 0: PM Agent (tier >= 1 — skip on Auto) ──────────────────────
+    if tier >= 1 and "pm" not in disabled:
+        await adk.messages.create(
+            task_id=task_id,
+            content=TextContent(
+                author="agent",
+                content=f"[Foreman] Dispatching PM — scanning repo and checking for ambiguities",
+            ),
+        )
+        pm_json: str = await workflow.execute_child_workflow(
+            PMAgent.run,
+            args=[goal, repo_path, task_id, task_queue, tier, model_for_tier_from_params(tier, task_params)],
+            id=f"{task_id}-r{iteration}-pm",
+            task_queue=task_queue,
+            execution_timeout=PM_TIMEOUT,
+        )
+        try:
+            pm_result = json.loads(pm_json)
+            enriched = pm_result.get("enriched_goal", "").strip()
+            if enriched and enriched != goal:
+                goal = enriched
+                log.info("pm_enriched_goal", length=len(goal))
+        except (json.JSONDecodeError, ValueError):
+            pass  # use original goal if PM fails
+
+    # ── Step 1: Architect ─────────────────────────────────────────────────
+    await adk.messages.create(
+        task_id=task_id,
+        content=TextContent(author="agent", content=f"[Foreman] Dispatching Architect — mapping {repo_path}"),
+    )
+
+    architect_json: str = await workflow.execute_child_workflow(
+        ArchitectAgent.run,
+        args=[goal, repo_path, task_id, ctx.conversation_history or None, None, architect_overlay or None],
+        id=f"{task_id}-r{iteration}-architect",
+        task_queue=task_queue,
+        execution_timeout=ARCHITECT_TIMEOUT,
+    )
+
+    try:
+        architect_plan = json.loads(architect_json)
+    except (json.JSONDecodeError, ValueError):
+        architect_plan = {
+            "tracks": [{"label": "main", "implementation_steps": [goal], "key_files": []}],
+            "tech_stack": [],
+            "repo_root": repo_path,
+        }
+    # Always overwrite repo_root with the user-supplied path — the architect LLM
+    # may omit or invent it, which causes builders to write to the wrong directory.
+    architect_plan["repo_root"] = repo_path
+
+    tracks = _extract_tracks(architect_plan, max_parallel_tracks=max_parallel_tracks)
+    stack = ", ".join(architect_plan.get("tech_stack", [])[:4]) or "unknown stack"
+
+    # ── Fix 4: Plan validation — sanitize before launching any builders ────
+    # Strip empty/whitespace steps; drop tracks left with zero valid steps.
+    sanitized: list[dict] = []
+    for t in tracks:
+        clean = [s for s in t.get("implementation_steps", []) if isinstance(s, str) and s.strip()]
+        if clean:
+            sanitized.append({**t, "implementation_steps": clean})
+        else:
+            log.warning("architect_track_dropped_empty_steps", label=t.get("label", "?"))
+    if len(sanitized) < len(tracks):
+        dropped_labels = [t.get("label", "?") for t in tracks if t not in sanitized]
+        await adk.messages.create(
+            task_id=task_id,
+            content=TextContent(
+                author="agent",
+                content=(
+                    f"[Foreman] ⚠ {len(tracks) - len(sanitized)} track(s) dropped — "
+                    f"no valid steps: {', '.join(dropped_labels)}. Re-using remaining tracks."
+                ),
+            ),
+        )
+        tracks = sanitized
+
+    total_steps = sum(len(t.get("implementation_steps", [])) for t in tracks)
+    log.info("architect_complete", tracks=len(tracks), total_steps=total_steps)
+
+    # Guard: if every track has 0 steps the architect produced an empty plan.
+    # Treat it as a failed run — fall back to a single main track with the raw goal.
+    if total_steps == 0:
+        log.warning("architect_empty_plan_fallback", tracks=len(tracks))
+        tracks = [{"label": "main", "implementation_steps": [goal], "key_files": []}]
+        total_steps = 1
+
+    # Guard: if a single track has more than 25 steps, the builder will hit the
+    # turn limit before finishing. Split oversized tracks into chunks of 20 steps.
+    MAX_STEPS_PER_TRACK = 25
+    split_tracks: list[dict] = []
+    for track in tracks:
+        steps = track.get("implementation_steps", [])
+        if len(steps) <= MAX_STEPS_PER_TRACK:
+            split_tracks.append(track)
+        else:
+            # Split into sub-tracks of MAX_STEPS_PER_TRACK steps each
+            label = track.get("label", "main")
+            key_files = track.get("key_files", [])
+            for chunk_idx, chunk_start in enumerate(range(0, len(steps), MAX_STEPS_PER_TRACK)):
+                chunk = steps[chunk_start:chunk_start + MAX_STEPS_PER_TRACK]
+                split_tracks.append({
+                    **track,
+                    "label": f"{label}-{chunk_idx + 1}" if chunk_idx > 0 else label,
+                    "implementation_steps": chunk,
+                    "key_files": key_files,
+                    # Each chunk after the first depends on the previous
+                    "depends_on": [f"{label}-{chunk_idx}"] if chunk_idx > 0 else track.get("depends_on", []),
+                })
+            log.warning("track_split_oversized", label=label, original_steps=len(steps), chunks=chunk_idx + 1)
+    if len(split_tracks) != len(tracks):
+        tracks = split_tracks
+        total_steps = sum(len(t.get("implementation_steps", [])) for t in tracks)
+
+    # ── Pre-flight: resolve key_file collisions between parallel tracks ──────
+    tracks, conflict_warnings = _resolve_track_conflicts(tracks)
+    if conflict_warnings:
+        warn_lines = "\n".join(f"  • {w}" for w in conflict_warnings)
+        await adk.messages.create(
+            task_id=task_id,
+            content=TextContent(
+                author="agent",
+                content=(
+                    f"[Foreman] ⚠ {len(conflict_warnings)} file conflict(s) auto-resolved — "
+                    f"parallel tracks claimed the same files; ownership reassigned:\n{warn_lines}"
+                ),
+            ),
+        )
+        log.warning("track_file_conflicts_resolved", count=len(conflict_warnings))
+        await sync_task_meta(task_id, {"track_warnings": conflict_warnings})
+
+    await adk.messages.create(
+        task_id=task_id,
+        content=TextContent(
+            author="agent",
+            content=(
+                f"[Architect] ✓ done — {len(tracks)} track(s) planned, "
+                f"stack: {stack}, "
+                f"{total_steps} steps total"
+            ),
+        ),
+    )
+
+    # Build initial repo index so the architect's query_index calls work on re-plans
+    # and builders can look up existing symbols from the first turn.
+    try:
+        await workflow.execute_activity(
+            "swarm_build_repo_index",
+            args=[repo_path],
+            start_to_close_timeout=timedelta(seconds=60),
+            retry_policy=RetryPolicy(maximum_attempts=1),
+        )
+    except Exception:
+        pass  # non-critical
+
+    # Build shared manifest in workflow state — gives every Builder visibility into
+    # sibling tracks' file ownership and exports, preventing collision and enabling
+    # correct imports. Stored on self so it's durable in Temporal event history
+    # and works correctly across distributed workers (no filesystem dependency).
+    ctx.manifest = build_manifest(tracks)
+
+    # ── HITL checkpoint 1: architect plan review (Standard / Full Crew) ─────
+    if tier >= 2:
+        conflict_note = (
+            f" ⚠ {len(conflict_warnings)} file conflict(s) auto-resolved."
+            if conflict_warnings else ""
+        )
+        action = (
+            f"Architect plan ready: {len(tracks)} track(s), stack: {stack}, "
+            f"{total_steps} steps.{conflict_note} "
+            f"Approve to launch builders?"
+        )
+        approved = await hitl_checkpoint(
+            task_id=task_id,
+            task_queue=task_queue,
+            checkpoint="architect_plan",
+            action=action,
+            iteration=iteration,
+        )
+        if not approved:
+            await adk.messages.create(
+                task_id=task_id,
+                content=TextContent(author="agent", content="[Foreman] Build rejected at architect review. Stopping."),
+            )
+            return "[Foreman] Task rejected by user at architect plan checkpoint."
+
+    # Snapshot pre-existing tests so Inspector can detect regressions
+    try:
+        pre_existing_tests: list[str] = await workflow.execute_activity(
+            "swarm_find_test_files",
+            args=[repo_path],
+            start_to_close_timeout=timedelta(seconds=30),
+            retry_policy=RetryPolicy(maximum_attempts=2),
+        )
+    except Exception:
+        pre_existing_tests = []
+
+    # ── Step 2: Parallel Builders + Inspector self-healing loop ───────────
+    heal_instructions: list[str] = []
+    build_result: dict = {}
+    inspector_report: dict = {}
+    reviewer_report: dict = {"verdict": "approve", "summary": "", "comments": []}
+    heal_cycles = 0
+    reviewer_heal_cycles = 0
+    MAX_REVIEWER_HEAL_CYCLES = 1  # Reviewer retries don't consume Inspector budget
+    _builder_model = model_for_tier_from_params(tier, task_params)
+    _inspector_model = model_for_tier_from_params(tier, task_params)
+
+    # Collect all test specs from tracks for the Inspector's TDD verification
+    all_test_specs: list[str] = []
+    for t in tracks:
+        all_test_specs.extend(t.get("test_spec", []))
+
+    # QA commands from Architect — passed directly to Inspector so it never has to discover them
+    qa_commands: dict = architect_plan.get("qa_commands") or {}
+    if playbook_qa:
+        qa_commands = {**playbook_qa, **qa_commands}
+
+    # ── Baseline test run: capture pre-existing failures before builders start ──
+    # Runs the configured test suite on the unmodified repo. Any tests that
+    # fail here are not this build's fault — the Inspector will ignore them.
+    baseline_failing_tests: list[str] = []
+    _baseline_cmd = qa_commands.get("test") if qa_commands else None
+    if _baseline_cmd and not lightweight_mode:
+        await adk.messages.create(
+            task_id=task_id,
+            content=TextContent(
+                author="agent",
+                content="[Foreman] Running baseline tests to record pre-existing failures...",
+            ),
+        )
+        try:
+            _baseline_out: str = await workflow.execute_activity(
+                "swarm_run_command",
+                args=[_baseline_cmd, repo_path],
+                start_to_close_timeout=timedelta(seconds=120),
+                retry_policy=RetryPolicy(maximum_attempts=1),
+            )
+            baseline_failing_tests = _parse_failing_tests(_baseline_out)
+            if baseline_failing_tests:
+                log.info("baseline_failures_recorded", count=len(baseline_failing_tests))
+                await adk.messages.create(
+                    task_id=task_id,
+                    content=TextContent(
+                        author="agent",
+                        content=(
+                            f"[Foreman] Baseline: {len(baseline_failing_tests)} pre-existing "
+                            f"failure(s) recorded — Inspector will not count these against the build."
+                        ),
+                    ),
+                )
+        except Exception:
+            pass  # non-critical — Inspector runs without baseline if this times out
+
+    for cycle in range(max_heal + 1):
+        cycle_label = f"heal cycle {cycle}" if cycle > 0 else "initial build"
+
+        # ── #6: Git snapshot before each cycle ───────────────────────────
+        # Save a restore point so a bad heal can't corrupt a good previous state.
+        snapshot_ref = f"{task_id}-r{iteration}-c{cycle}"
+        try:
+            snapshot_json: str = await workflow.execute_activity(
+                "swarm_git_snapshot_save",
+                args=[repo_path, snapshot_ref],
+                start_to_close_timeout=timedelta(seconds=30),
+                retry_policy=RetryPolicy(maximum_attempts=1),
+            )
+        except Exception:
+            snapshot_json = "{}"  # non-critical — proceed without snapshot
+
+        # Announce parallel launch
+        track_names = " + ".join(t.get("label", f"track-{i}") for i, t in enumerate(tracks))
+        if len(tracks) > 1:
+            await adk.messages.create(
+                task_id=task_id,
+                content=TextContent(
+                    author="agent",
+                    content=(
+                        f"[Foreman] Launching {len(tracks)} parallel builders "
+                        f"({cycle_label}): {track_names}"
+                    ),
+                ),
+            )
+        else:
+            await adk.messages.create(
+                task_id=task_id,
+                content=TextContent(
+                    author="agent",
+                    content=f"[Foreman] Dispatching Builder ({cycle_label})...",
+                ),
+            )
+
+        # ── #11: Wave-based execution respecting track dependencies ─────
+        # Tracks with depends_on wait for their dependencies to complete.
+        # Independent tracks run in parallel within the same wave.
+        track_waves = _order_tracks_by_deps(tracks)
+        all_builder_jsons: list[str] = []
+
+        for wave_idx, wave_tracks in enumerate(track_waves):
+            # Fix 6: warn explicitly when a wave has more tracks than the parallel limit.
+            # Excess tracks are dropped here — surface it rather than silently losing work.
+            if len(wave_tracks) > max_parallel_tracks:
+                dropped = [t.get("label", "?") for t in wave_tracks[max_parallel_tracks:]]
+                log.warning("wave_tracks_overflow", wave=wave_idx, dropped=dropped, cap=max_parallel_tracks)
+                await adk.messages.create(
+                    task_id=task_id,
+                    content=TextContent(
+                        author="agent",
+                        content=(
+                            f"[Foreman] ⚠ Wave {wave_idx + 1} has {len(wave_tracks)} tracks but parallel "
+                            f"limit is {max_parallel_tracks}. Dropping: {', '.join(dropped)}. "
+                            "Increase max_parallel_tracks in Settings to run all tracks."
+                        ),
+                    ),
+                )
+            wave_tracks_capped = wave_tracks[:max_parallel_tracks]
+            wave_label = f"wave {wave_idx + 1}/{len(track_waves)}"
+            if len(track_waves) > 1:
+                wave_names = " + ".join(t.get("label", "?") for t in wave_tracks_capped)
+                await adk.messages.create(
+                    task_id=task_id,
+                    content=TextContent(
+                        author="agent",
+                        content=f"[Foreman] {wave_label}: launching {len(wave_tracks_capped)} builder(s) — {wave_names}",
+                    ),
+                )
+
+            # Wave gate: verify prior wave's declared key_files exist on disk
+            # Missing files mean wave N-1 builder silently failed a write —
+            # flag it so the LLM context for this wave includes the gap.
+            if wave_idx > 0:
+                prev_wave = track_waves[wave_idx - 1]
+                missing_files: list[str] = []
+                for prev_track in prev_wave[:max_parallel_tracks]:
+                    for kf in prev_track.get("key_files", []):
+                        kf_path = Path(kf) if Path(kf).is_absolute() else Path(repo_path) / kf
+                        if not kf_path.exists():
+                            missing_files.append(kf)
+                if missing_files:
+                    await adk.messages.create(
+                        task_id=task_id,
+                        content=TextContent(
+                            author="agent",
+                            content=(
+                                f"[Foreman] ⚠ Wave {wave_idx} gate: {len(missing_files)} file(s) from "
+                                f"prior wave not found on disk: {', '.join(missing_files[:5])}. "
+                                "Wave continues — builders should re-create any missing dependencies."
+                            ),
+                        ),
+                    )
+                    log.warning("wave_gate_missing_files", wave=wave_idx, missing=missing_files)
+
+            # Update manifest snapshot for this wave — previous waves' edits are now visible
+            manifest_snapshot = json.dumps(ctx.manifest)
+
+            wave_handles = [
+                workflow.execute_child_workflow(
+                    BuilderAgent.run,
+                    args=[
+                        goal,
+                        _track_plan(architect_plan, track),
+                        task_id,
+                        heal_instructions or None,
+                        track.get("label"),
+                        manifest_snapshot or None,
+                        _builder_model,
+                    ],
+                    id=f"{task_id}-r{iteration}-builder-{cycle}-w{wave_idx}-{i}",
+                    task_queue=task_queue,
+                    execution_timeout=BUILDER_TIMEOUT,
+                )
+                for i, track in enumerate(wave_tracks_capped)
+            ]
+
+            wave_jsons: tuple[str, ...] = await asyncio.gather(*wave_handles)
+            all_builder_jsons.extend(wave_jsons)
+
+            # Update manifest after each wave so the next wave sees completed edits
+            for i, (bj, track) in enumerate(zip(wave_jsons, wave_tracks_capped)):
+                try:
+                    bd = json.loads(bj)
+                    for edit in bd.get("edits", []):
+                        ctx.manifest["completed_edits"].append({
+                            "track": track.get("label", f"w{wave_idx}-{i}"),
+                            "path": edit.get("path", ""),
+                            "operation": edit.get("operation", ""),
+                        })
+                except Exception:
+                    pass
+
+            # Rebuild symbol index between waves so downstream builders can
+            # locate symbols and types written by the wave that just finished.
+            if wave_idx < len(track_waves) - 1:
+                try:
+                    await workflow.execute_activity(
+                        "swarm_build_repo_index",
+                        args=[repo_path],
+                        start_to_close_timeout=timedelta(seconds=45),
+                        retry_policy=RetryPolicy(maximum_attempts=1),
+                    )
+                except Exception:
+                    pass  # non-critical — next wave proceeds with stale index
+
+        builder_jsons = tuple(all_builder_jsons)
+        build_result = _merge_build_results(builder_jsons)
+
+        # ── #10: Build repo index after each build cycle ─────────────────
+        # Keeps the symbol index current so subsequent agents (heal builders,
+        # follow-up architects) can query it instead of exploring blind.
+        try:
+            await workflow.execute_activity(
+                "swarm_build_repo_index",
+                args=[repo_path],
+                start_to_close_timeout=timedelta(seconds=60),
+                retry_policy=RetryPolicy(maximum_attempts=1),
+            )
+        except Exception:
+            pass  # non-critical — index is advisory
+
+        # ── Item 4: Architect feedback on builder failure ─────────────────
+        # If any track failed on the INITIAL build (cycle 0), re-invoke the
+        # Architect with the failure context before attempting Inspector/heal.
+        # This catches bad decompositions early rather than burning heal cycles
+        # on a structurally broken plan.
+        if not build_result.get("success") and cycle == 0:
+            failed_tracks = []
+            for bj, track in zip(builder_jsons, tracks):
+                try:
+                    bd = json.loads(bj)
+                    if not bd.get("success"):
+                        failed_tracks.append({
+                            "label": track.get("label", "unknown"),
+                            "summary": bd.get("summary", "Builder failed without summary")[:300],
+                            "errors": bd.get("errors", [])[:3],
+                        })
+                except Exception:
+                    failed_tracks.append({"label": track.get("label", "unknown"), "summary": str(bj)[:200], "errors": []})
+
+            log.warning("builder_failure_triggering_replan", failed_tracks=len(failed_tracks))
+            await adk.messages.create(
+                task_id=task_id,
+                content=TextContent(
+                    author="agent",
+                    content=(
+                        f"[Foreman] {len(failed_tracks)} track(s) failed — re-invoking Architect "
+                        f"to revise the plan before attempting heal cycles."
+                    ),
+                ),
+            )
+
+            failure_context = {
+                "reason": "builder_failure",
+                "failed_tracks": failed_tracks,
+                "heal_instructions": [],
+            }
+            replan_json: str = await workflow.execute_child_workflow(
+                ArchitectAgent.run,
+                args=[goal, repo_path, task_id, ctx.conversation_history or None, failure_context, architect_overlay or None],
+                id=f"{task_id}-r{iteration}-architect-replan-{cycle}",
+                task_queue=task_queue,
+                execution_timeout=ARCHITECT_TIMEOUT,
+            )
+            try:
+                replan = json.loads(replan_json)
+                replan["repo_root"] = repo_path
+                architect_plan = replan
+                tracks = _extract_tracks(architect_plan, max_parallel_tracks=max_parallel_tracks)
+                # Rebuild manifest for the revised track set
+                ctx.manifest = build_manifest(
+                    tracks,
+                    completed_edits=ctx.manifest.get("completed_edits", []),
+                )
+                log.info("architect_replan_accepted", new_tracks=len(tracks))
+                await adk.messages.create(
+                    task_id=task_id,
+                    content=TextContent(
+                        author="agent",
+                        content=(
+                            f"[Architect] Revised plan — {len(tracks)} track(s): "
+                            + " + ".join(t.get("label", "?") for t in tracks)
+                        ),
+                    ),
+                )
+                # Continue to next cycle with the revised plan (don't break)
+                continue
+            except Exception as e:
+                log.warning("architect_replan_failed", error=str(e))
+                # Replan failed — fall through to normal failure handling
+            break  # original build failed and replan also failed
+
+        if not build_result.get("success"):
+            log.warning("builder_failed", cycle=cycle)
+            break
+
+        # ── Smoke test: compile + type-check before full Inspector run ─────
+        # Catches syntax/type errors cheaply (~10s) before burning 5+ minutes
+        # on the full test suite. If smoke fails, inject errors as heal
+        # instructions and skip the Inspector for this cycle.
+        try:
+            smoke_result: dict = await workflow.execute_activity(
+                "swarm_verify_build",
+                args=[repo_path],
+                start_to_close_timeout=timedelta(seconds=120),
+                retry_policy=RetryPolicy(maximum_attempts=1),
+            )
+            smoke_status = smoke_result.get("status", "no_tools")
+            if smoke_status == "failed":
+                smoke_errors = smoke_result.get("errors", [])
+                smoke_summary = smoke_result.get("summary", "compile/type errors detected")
+                heal_instructions = [f"Compile/type error: {e}" for e in smoke_errors[:10]]
+                heal_cycles += 1
+                await adk.messages.create(
+                    task_id=task_id,
+                    content=TextContent(
+                        author="agent",
+                        content=(
+                            f"[Foreman] Smoke test failed — {smoke_summary}. "
+                            f"Dispatching targeted heal ({len(heal_instructions)} error(s))."
+                        ),
+                    ),
+                )
+                tracks = [{"label": "heal", "implementation_steps": heal_instructions, "key_files": []}]
+                continue  # skip Inspector, go straight to heal cycle
+            else:
+                await adk.messages.create(
+                    task_id=task_id,
+                    content=TextContent(
+                        author="agent",
+                        content=f"[Foreman] Smoke test {'passed' if smoke_status == 'passed' else 'skipped (no tools detected)'} — dispatching Inspector",
+                    ),
+                )
+        except Exception:
+            pass  # smoke test unavailable — proceed to Inspector as before
+
+        # Inspector
+        if "inspector" in disabled:
+            inspector_report = {"passed": True, "summary": "Inspector skipped via pipeline config.", "heal_instructions": []}
+            await adk.messages.create(
+                task_id=task_id,
+                content=TextContent(author="agent", content="[Foreman] Inspector skipped — pipeline.disable_agents"),
+            )
+        else:
+            await adk.messages.create(
+                task_id=task_id,
+                content=TextContent(
+                    author="agent",
+                    content=f"[Foreman] Dispatching Inspector ({cycle_label}) — running tests, lint, types",
+                ),
+            )
+
+            inspector_json: str = await workflow.execute_child_workflow(
+                InspectorAgent.run,
+                args=[
+                    goal,
+                    repo_path,
+                    task_id,
+                    pre_existing_tests or None,
+                    _inspector_model,
+                    all_test_specs or None,
+                    qa_commands or None,
+                    baseline_failing_tests or None,
+                    inspector_overlay or None,
+                ],
+                id=f"{task_id}-r{iteration}-inspector-{cycle}",
+                task_queue=task_queue,
+                execution_timeout=INSPECTOR_TIMEOUT,
+            )
+
+            try:
+                inspector_report = json.loads(inspector_json)
+            except (json.JSONDecodeError, ValueError):
+                inspector_report = {"passed": False, "summary": inspector_json, "heal_instructions": []}
+
+        if inspector_report.get("passed"):
+            log.info("inspector_passed", cycle=cycle, tests_skipped=inspector_report.get("tests_skipped", False))
+            inspector_summary = inspector_report.get("summary", "all checks passed")
+            await adk.messages.create(
+                task_id=task_id,
+                content=TextContent(
+                    author="agent",
+                    content=f"[Inspector] ✓ done — {inspector_summary}",
+                ),
+            )
+            # Propagate skipped-tests warning into the build summary so DevOps
+            # includes it in the PR description — reviewers need to know.
+            if inspector_report.get("tests_skipped"):
+                existing = build_result.get("summary", "")
+                build_result["summary"] = (existing + f"\n\n{inspector_summary}").strip()
+
+            # ── Reviewer: logic + contract check ─────────────────────────
+            if lightweight_mode or "reviewer" in disabled:
+                reviewer_report = {"verdict": "approve", "summary": "Reviewer skipped.", "comments": []}
+            else:
+                await adk.messages.create(
+                    task_id=task_id,
+                    content=TextContent(author="agent", content="[Foreman] Dispatching Reviewer — checking logic and contracts"),
+                )
+                all_key_files_for_review = sorted({kf for t in tracks for kf in t.get("key_files", []) if kf})
+                reviewer_json: str = await workflow.execute_child_workflow(
+                    ReviewerAgent.run,
+                    args=[goal, repo_path, architect_plan, all_key_files_for_review, task_id],
+                    id=f"{task_id}-r{iteration}-reviewer-c{cycle}",
+                    task_queue=task_queue,
+                    execution_timeout=REVIEWER_TIMEOUT,
+                )
+                try:
+                    reviewer_report = json.loads(reviewer_json)
+                except (json.JSONDecodeError, ValueError):
+                    reviewer_report = {"verdict": "approve", "summary": reviewer_json, "comments": []}
+
+            if reviewer_report.get("verdict") == "approve":
+                log.info("reviewer_approved", cycle=cycle)
+                await adk.messages.create(
+                    task_id=task_id,
+                    content=TextContent(
+                        author="agent",
+                        content=f"[Reviewer] ✓ Approved — {reviewer_report.get('summary', '')}",
+                    ),
+                )
+                break
+
+            # Reviewer requested changes — convert comments to heal instructions
+            review_comments = reviewer_report.get("comments", [])
+            reviewer_heal = [
+                f"{c.get('file', '')}:{c.get('line', '?')} [{c.get('severity', 'major')}] {c.get('issue', '')} — Fix: {c.get('suggestion', '')}"
+                for c in review_comments
+            ] or [reviewer_report.get("summary", "Reviewer requested changes.")]
+            log.info("reviewer_requested_changes", cycle=cycle, items=len(reviewer_heal))
+            await adk.messages.create(
+                task_id=task_id,
+                content=TextContent(
+                    author="agent",
+                    content=(
+                        f"[Reviewer] ✗ Changes requested ({len(reviewer_heal)} issue(s)) — "
+                        + "; ".join(reviewer_heal[:2])
+                    ),
+                ),
+            )
+            if reviewer_heal_cycles >= MAX_REVIEWER_HEAL_CYCLES:
+                log.warning("reviewer_heal_budget_exhausted", reviewer_heals=reviewer_heal_cycles)
+                await adk.messages.create(
+                    task_id=task_id,
+                    content=TextContent(
+                        author="agent",
+                        content="[Foreman] Reviewer heal budget exhausted — proceeding to Security.",
+                    ),
+                )
+                break
+            heal_instructions = reviewer_heal
+            heal_cycles += 1
+            reviewer_heal_cycles += 1
+            tracks = [{"label": "reviewer-heal", "implementation_steps": heal_instructions, "key_files": all_key_files_for_review}]
+            continue
+
+        # Merge structured heal_items (precise) with free-text heal_instructions
+        heal_items = inspector_report.get("heal_items", [])
+        heal_instructions = heal_items + inspector_report.get("heal_instructions", [])
+        heal_cycles += 1
+
+        await adk.messages.create(
+            task_id=task_id,
+            content=TextContent(
+                author="agent",
+                content=f"[Inspector] ✗ failed — {inspector_report.get('summary', 'checks failed')}",
+            ),
+        )
+
+        # ── #6: Restore snapshot before next heal cycle ──────────────────
+        # If the heal cycle makes things worse, we want to start from the
+        # known-good state at the beginning of this cycle, not a broken one.
+        if snapshot_json and snapshot_json != "{}":
+            try:
+                await workflow.execute_activity(
+                    "swarm_git_snapshot_restore",
+                    args=[repo_path, snapshot_json],
+                    start_to_close_timeout=timedelta(seconds=30),
+                    retry_policy=RetryPolicy(maximum_attempts=1),
+                )
+            except Exception:
+                pass  # non-critical — proceed without restore
+
+        if cycle >= max_heal:
+            log.warning("heal_cycles_exhausted", max_heal=max_heal)
+
+            # ── Item 5: Re-decompose before escalating to HITL ───────────
+            # Before asking the user, give the Architect one more shot with
+            # the full set of Inspector heal_instructions. This catches cases
+            # where the original decomposition was structurally wrong and no
+            # amount of builder patching can fix it.
+            await adk.messages.create(
+                task_id=task_id,
+                content=TextContent(
+                    author="agent",
+                    content=(
+                        f"[Foreman] Heal cycles exhausted — re-invoking Architect "
+                        f"with Inspector findings before escalating to user."
+                    ),
+                ),
+            )
+            failure_context_heal = {
+                "reason": "heal_exhausted",
+                "failed_tracks": [],
+                "heal_instructions": heal_instructions,
+            }
+            try:
+                replan_json2: str = await workflow.execute_child_workflow(
+                    ArchitectAgent.run,
+                    args=[goal, repo_path, task_id, ctx.conversation_history or None, failure_context_heal, architect_overlay or None],
+                    id=f"{task_id}-r{iteration}-architect-replan-heal-{cycle}",
+                    task_queue=task_queue,
+                    execution_timeout=ARCHITECT_TIMEOUT,
+                )
+                replan2 = json.loads(replan_json2)
+                replan2["repo_root"] = repo_path
+                architect_plan = replan2
+                tracks = _extract_tracks(architect_plan, max_parallel_tracks=max_parallel_tracks)
+                ctx.manifest = build_manifest(
+                    tracks,
+                    completed_edits=ctx.manifest.get("completed_edits", []),
+                )
+                # Reset heal budget for the re-decomposed plan
+                heal_instructions = []
+                heal_cycles_before_replan = heal_cycles
+                log.info("architect_heal_replan_accepted", new_tracks=len(tracks))
+                await adk.messages.create(
+                    task_id=task_id,
+                    content=TextContent(
+                        author="agent",
+                        content=(
+                            f"[Architect] Structural re-plan after {heal_cycles_before_replan} heal cycle(s) — "
+                            f"{len(tracks)} revised track(s): "
+                            + " + ".join(t.get("label", "?") for t in tracks)
+                        ),
+                    ),
+                )
+                # Continue with the revised plan — don't escalate to HITL yet
+                continue
+            except Exception as e:
+                log.warning("architect_heal_replan_failed", error=str(e))
+                # Re-plan failed — fall through to HITL
+
+            action = (
+                f"Inspector still failing after {max_heal} heal cycle(s) and an Architect re-plan. "
+                f"Last issue: {inspector_report.get('summary', 'checks failed')[:200]}. "
+                f"Proceed anyway (code may be broken)?"
+            )
+            approved = await hitl_checkpoint(
+                task_id=task_id,
+                task_queue=task_queue,
+                checkpoint="max_heals",
+                action=action,
+                iteration=iteration,
+            )
+            if not approved:
+                await adk.messages.create(
+                    task_id=task_id,
+                    content=TextContent(author="agent", content="[Foreman] Stopping after heal exhaustion — rejected by user."),
+                )
+                return "[Foreman] Task rejected by user after max heal cycles."
+            await adk.messages.create(
+                task_id=task_id,
+                content=TextContent(
+                    author="agent",
+                    content="[Foreman] Proceeding past failed inspector — approved by user.",
+                ),
+            )
+            break
+
+        await adk.messages.create(
+            task_id=task_id,
+            content=TextContent(
+                author="agent",
+                content=(
+                    f"[Foreman] Dispatching Builder (heal cycle {cycle + 1}/{max_heal}) — "
+                    + "; ".join(heal_instructions[:3])
+                ),
+            ),
+        )
+        tracks = [{"label": "heal", "implementation_steps": heal_instructions, "key_files": []}]
+
+    # ── Step 3: Security ──────────────────────────────────────────────────
+    if lightweight_mode or "security" in disabled:
+        security_report = {
+            "passed": True,
+            "summary": "Security skipped.",
+            "findings": [],
+        }
+        await adk.messages.create(
+            task_id=task_id,
+            content=TextContent(author="agent", content="[Foreman] Security skipped"),
+        )
+    else:
+        await adk.messages.create(
+            task_id=task_id,
+            content=TextContent(author="agent", content="[Foreman] Dispatching Security — scanning secrets, deps, SAST"),
+        )
+
+        security_json: str = await workflow.execute_child_workflow(
+            SecurityAgent.run,
+            args=[goal, repo_path, task_id],
+            id=f"{task_id}-r{iteration}-security",
+            task_queue=task_queue,
+            execution_timeout=SECURITY_TIMEOUT,
+        )
+
+        try:
+            security_report = json.loads(security_json)
+        except (json.JSONDecodeError, ValueError):
+            security_report = {"passed": True, "summary": security_json, "findings": []}
+
+    if not security_report.get("passed"):
+        critical = [
+            f for f in security_report.get("findings", [])
+            if f.get("severity") in ("critical", "high")
+        ]
+        await adk.messages.create(
+            task_id=task_id,
+            content=TextContent(
+                author="agent",
+                content=(
+                    f"[Security] ✗ failed — {len(critical)} critical/high finding(s): "
+                    + "; ".join(f.get('description', '')[:60] for f in critical[:3])
+                ),
+            ),
+        )
+        return _build_final_report(
+            goal=goal,
+            tracks=tracks,
+            build_result=build_result,
+            inspector_report=inspector_report,
+            reviewer_report=reviewer_report,
+            security_report=security_report,
+            devops_result=None,
+            heal_cycles=heal_cycles,
+            blocked_by="security",
+            quality_score=None,
+        )
+
+    await adk.messages.create(
+        task_id=task_id,
+        content=TextContent(
+            author="agent",
+            content=f"[Security] ✓ done — {security_report.get('summary', 'no critical findings')}",
+        ),
+    )
+
+    # ── Step 4: DevOps ────────────────────────────────────────────────────
+    # HITL checkpoint 3: deployment approval (Full Crew only)
+    if tier >= 3:
+        action = (
+            f"Build and QA complete. Approve creating branch '{branch}' "
+            f"and opening a pull request?"
+        )
+        approved = await hitl_checkpoint(
+            task_id=task_id,
+            task_queue=task_queue,
+            checkpoint="devops",
+            action=action,
+            iteration=iteration,
+        )
+        if not approved:
+            await adk.messages.create(
+                task_id=task_id,
+                content=TextContent(author="agent", content="[Foreman] Deployment rejected by user. Build artifacts remain on disk."),
+            )
+            return _build_final_report(
+                goal=goal,
+                tracks=tracks,
+                build_result=build_result,
+                inspector_report=inspector_report,
+                reviewer_report=reviewer_report,
+                security_report=security_report,
+                devops_result=None,
+                heal_cycles=heal_cycles,
+                blocked_by="user rejected deployment",
+                quality_score=None,
+            )
+
+    await adk.messages.create(
+        task_id=task_id,
+        content=TextContent(author="agent", content=f"[Foreman] Dispatching DevOps — branch: {branch}"),
+    )
+
+    # Union actual writes (from Builder edits) with Architect plan key_files.
+    # Edits are authoritative — key_files may be stale after heal/reviewer cycles.
+    _edited_paths = sorted({e.get("path", "") for e in build_result.get("edits", []) if e.get("path")})
+    _plan_key_files = sorted({kf for t in tracks for kf in t.get("key_files", []) if kf})
+    all_key_files = sorted(set(_edited_paths) | set(_plan_key_files))
+
+    # ── Build report: assemble structured audit trail for PR description ──
+    _prior_episode_count: int = 0
+    _active_facts: str = ""
+    try:
+        _prior_episode_count = await workflow.execute_activity(
+            "memory_count_episodes",
+            args=[repo_path],
+            start_to_close_timeout=timedelta(seconds=10),
+            retry_policy=RetryPolicy(maximum_attempts=1),
+        )
+    except Exception:
+        pass
+    try:
+        _active_facts = await workflow.execute_activity(
+            "memory_read_facts",
+            args=[repo_path, None],
+            start_to_close_timeout=timedelta(seconds=10),
+            retry_policy=RetryPolicy(maximum_attempts=1),
+        )
+    except Exception:
+        pass
+
+    _build_report: dict = {
+        "goal": goal,
+        "build_number": _prior_episode_count + 1,
+        "prior_episode_count": _prior_episode_count,
+        "tier": tier,
+        "tier_label": TIER_LABELS.get(tier, str(tier)),
+        "tracks": [
+            {
+                "label": t.get("label", ""),
+                "description": t.get("description", ""),
+            }
+            for t in tracks
+            if t.get("label") not in ("heal", "reviewer-heal")
+        ],
+        "tech_stack": architect_plan.get("tech_stack", []),
+        "files_modified": len(_edited_paths),
+        "heal_cycles": heal_cycles,
+        "inspector": {
+            "passed": inspector_report.get("passed", False),
+            "issues_fixed": heal_cycles,
+        },
+        "reviewer": {
+            "verdict": reviewer_report.get("verdict", "approve"),
+            "notes": reviewer_report.get("notes", ""),
+        },
+        "security": {
+            "passed": security_report.get("passed", True),
+            "finding_count": len(security_report.get("findings", [])),
+            "critical_count": len([
+                f for f in security_report.get("findings", [])
+                if f.get("severity") in ("critical", "high")
+            ]),
+        },
+        "active_facts": _active_facts,
+        "explicit_exclusions": architect_plan.get("out_of_scope", []),
+    }
+
+    devops_json: str = await workflow.execute_child_workflow(
+        DevOpsAgent.run,
+        args=[goal, repo_path, branch, task_id, build_result.get("summary", ""), all_key_files or None, _build_report],
+        id=f"{task_id}-r{iteration}-devops",
+        task_queue=task_queue,
+        execution_timeout=DEVOPS_TIMEOUT,
+    )
+
+    try:
+        devops_result = json.loads(devops_json)
+    except (json.JSONDecodeError, ValueError):
+        devops_result = {"branch": branch, "success": False, "summary": devops_json}
+
+    pr_url = devops_result.get("pr_url", "")
+    await adk.messages.create(
+        task_id=task_id,
+        content=TextContent(
+            author="agent",
+            content=(
+                f"[DevOps] ✓ done — branch '{devops_result.get('branch', branch)}' pushed"
+                + (f", PR: {pr_url}" if pr_url else "")
+            ),
+        ),
+    )
+
+    # ── Quality scoring — Phase 5 (#15) ──────────────────────────────────
+    # Run a lightweight Haiku eval after DevOps to score the build 0–10.
+    # Score is stored in the episode record and shown in the final report.
+    quality_score: dict = {"score": 5.0, "reasoning": "not scored"}
+    try:
+        edited_paths = [e.get("path", "") for e in build_result.get("edits", [])]
+        quality_score = await workflow.execute_activity(
+            "score_build_quality",
+            args=[
+                goal,
+                repo_path,
+                edited_paths,
+                inspector_report.get("passed", False),
+                heal_cycles,
+                len(edited_paths),
+                task_id,
+            ],
+            start_to_close_timeout=timedelta(seconds=45),
+            retry_policy=RetryPolicy(maximum_attempts=1),
+        )
+        score = quality_score.get("score", 5.0)
+        await adk.messages.create(
+            task_id=task_id,
+            content=TextContent(
+                author="agent",
+                content=(
+                    f"[Foreman] Build quality score: {score}/10 — "
+                    f"{quality_score.get('reasoning', '')}"
+                ),
+            ),
+        )
+    except Exception:
+        pass  # non-critical
+
+    # ── GitHub comment: quality score breakdown posted to the PR ──────────
+    if pr_url and quality_score.get("score") is not None:
+        try:
+            await workflow.execute_activity(
+                "swarm_post_github_comment",
+                args=[
+                    pr_url,
+                    format_quality_comment(
+                        quality_score,
+                        build_number=_build_report.get("build_number", "?"),
+                        prior_episode_count=_build_report.get("prior_episode_count", 0),
+                    ),
+                    repo_path,
+                ],
+                start_to_close_timeout=timedelta(seconds=30),
+                retry_policy=RetryPolicy(maximum_attempts=2),
+            )
+        except Exception:
+            pass  # non-critical
+
+    # ── Persist structured result (I3 primary path) ───────────────────────
+    if project_id:
+        resolved_branch = devops_result.get("branch", branch) if devops_result else branch
+        files_changed = len(build_result.get("edits", []))
+        try:
+            persist_json: str = await workflow.execute_activity(
+                "db_upsert_build",
+                args=[
+                    task_id,
+                    project_id,
+                    "system",
+                    resolved_branch,
+                    pr_url,
+                    quality_score.get("score") if quality_score else None,
+                    "COMPLETED",
+                    tier,
+                    heal_cycles,
+                    files_changed,
+                ],
+                start_to_close_timeout=timedelta(seconds=20),
+                retry_policy=RetryPolicy(maximum_attempts=3),
+            )
+            if persist_json and '"ok": false' in persist_json.replace(" ", "").lower():
+                log.warning("structured_result_persist_failed", task_id=task_id, response=persist_json[:200])
+        except Exception as exc:
+            log.warning("structured_result_persist_error", task_id=task_id, error=str(exc))
+
+    # ── Final report ──────────────────────────────────────────────────────
+    final = _build_final_report(
+        goal=goal,
+        tracks=tracks,
+        build_result=build_result,
+        inspector_report=inspector_report,
+        reviewer_report=reviewer_report,
+        security_report=security_report,
+        devops_result=devops_result,
+        heal_cycles=heal_cycles,
+        quality_score=quality_score,
+    )
+
+    await adk.messages.create(
+        task_id=task_id,
+        content=TextContent(author="agent", content=final),
+    )
+
+    log.info("swarm_complete", heal_cycles=heal_cycles, pr=devops_result.get("pr_url"))
+
+    # ── Episodic memory: record this build for future agent context ────────
+    try:
+        episode = build_episode_record(
+            goal=goal,
+            tier=tier,
+            tier_label=TIER_LABELS.get(tier, str(tier)),
+            tracks=tracks,
+            architect_plan=architect_plan,
+            build_result=build_result,
+            inspector_report=inspector_report,
+            security_report=security_report,
+            devops_result=devops_result,
+            heal_cycles=heal_cycles,
+            quality_score=quality_score,
+        )
+        await workflow.execute_activity(
+            "memory_append_episode",
+            args=[repo_path, episode],
+            start_to_close_timeout=timedelta(seconds=15),
+            retry_policy=RetryPolicy(maximum_attempts=2),
+        )
+    except Exception:
+        pass  # episode write is non-critical
+
+    await workflow.execute_activity(
+        "clear_task_llm_config",
+        args=[task_id],
+        start_to_close_timeout=timedelta(seconds=10),
+        retry_policy=RetryPolicy(maximum_attempts=1),
+    )
+
+    return final

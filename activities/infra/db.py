@@ -30,13 +30,28 @@ async def db_upsert_build(
     pr_url: str = "",
     quality_score: float | None = None,
     status: str = "COMPLETED",
+    tier: int | None = None,
+    heal_cycles: int | None = None,
+    files_changed: int | None = None,
 ) -> str:
-    """Upsert a build record into the Postgres builds table via the Gantry API.
+    """Upsert a structured build record via the Gantry API (Invariant I3).
 
-    Non-fatal — if the API is unreachable or DATABASE_URL is not configured,
-    logs a warning and returns a no-op result. This keeps the orchestrator
-    working in local dev where Postgres is not set up.
+    This is the primary path for task results. Failures are logged; the poller
+    may fall back to message scraping only when this write does not succeed.
     """
+    structured_result = {
+        k: v
+        for k, v in {
+            "pr_url": pr_url or None,
+            "branch": branch or None,
+            "quality_score": quality_score,
+            "tier": tier,
+            "heal_cycles": heal_cycles,
+            "files_changed": files_changed,
+        }.items()
+        if v is not None
+    }
+
     payload = {
         "task_id": task_id,
         "project_id": project_id,
@@ -45,9 +60,13 @@ async def db_upsert_build(
         "pr_url": pr_url or None,
         "quality_score": quality_score,
         "status": status,
+        "tier": tier,
+        "heal_cycles": heal_cycles,
+        "files_changed": files_changed,
+        "result": structured_result or None,
     }
     try:
-        async with httpx.AsyncClient(timeout=10) as client:
+        async with httpx.AsyncClient(timeout=15) as client:
             resp = await client.post(
                 f"{_GANTRY_API_URL}/internal/db/builds",
                 json=payload,

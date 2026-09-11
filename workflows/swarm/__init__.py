@@ -2,10 +2,14 @@
 workflows.swarm — sub-package containing extracted helpers for SwarmOrchestrator.
 
 Sub-modules:
+  pipeline       — full PM → DevOps pipeline (invoked by Foreman)
   track_manager  — track extraction, dependency ordering, conflict resolution
   healing        — failing-test parsing and failure-recovery helpers
   state          — workflow manifest builder
   reporting      — final report assembly and PR comment formatting
+  repo_setup     — repository clone / init
+  hitl           — HITL payload builders
+  completion     — structured result + episode payloads
 """
 from workflows.swarm.track_manager import (
     _extract_tracks,

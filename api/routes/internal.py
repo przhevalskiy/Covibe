@@ -29,7 +29,7 @@ async def proxy_signal(
     body: dict,
     x_internal_key: str | None = Header(default=None),
 ):
-    """Proxy a Temporal workflow signal from Next.js."""
+    """Proxy a Temporal workflow signal from the Gantry API HITL routes."""
     _check(x_internal_key)
 
     workflow_id = body.get("workflow_id")

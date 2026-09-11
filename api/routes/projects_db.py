@@ -116,6 +116,7 @@ class UpsertBuildBody(BaseModel):
     tier: int | None = None
     heal_cycles: int | None = None
     files_changed: int | None = None
+    result: dict | None = None
 
 
 @router.post("/builds", status_code=201)
@@ -130,6 +131,12 @@ async def upsert_build(
     if not project:
         raise HTTPException(status_code=404, detail="project not found")
 
+    structured_result = body.result or (
+        {"pr_url": body.pr_url, "branch": body.branch}
+        if body.pr_url or body.branch
+        else None
+    )
+
     build = await builds_repo.upsert_build(
         task_id=body.task_id,
         project_id=body.project_id,
@@ -142,7 +149,17 @@ async def upsert_build(
         tier=body.tier,
         heal_cycles=body.heal_cycles,
         files_changed=body.files_changed,
+        result=structured_result,
     )
+
+    if body.pr_url or body.branch:
+        await tasks_repo.update_task_status(
+            body.task_id,
+            status=(body.status or "completed").lower(),
+            pr_url=body.pr_url,
+            branch=body.branch,
+        )
+
     return {"build": build}
 
 

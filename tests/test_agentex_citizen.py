@@ -141,8 +141,10 @@ def test_workflow_defn_names_match_catalog_and_worker():
 
 
 def test_i7_foreman_composes_temporal_children_not_acp():
-    text = (ROOT / "workflows" / "swarm_orchestrator.py").read_text()
-    assert "execute_child_workflow" in text
+    orchestrator = (ROOT / "workflows" / "swarm_orchestrator.py").read_text()
+    pipeline = (ROOT / "workflows" / "swarm" / "pipeline.py").read_text()
+    assert "execute_child_workflow" in pipeline
+    assert "run_swarm_pipeline" in orchestrator
     assert "task/create" not in text
     assert 'acp_type="async"' in (ROOT / "project" / "acp.py").read_text()
     assert 'acp_type="async"' in (ROOT / "project" / "schema" / "acp.py").read_text()
