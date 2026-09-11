@@ -1,127 +1,126 @@
-import { useEffect, useState, useCallback } from 'react';
+import { useEffect, useState, useCallback, useMemo } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { ArrowLeft, ArrowUp, Pencil, MessageSquare, FolderKanban, Puzzle, CalendarClock } from 'lucide-react';
-import { Project, Discussion } from '@/shared/types';
+import { ArrowLeft, ArrowUp, Pencil, FolderKanban, CalendarClock, PlayCircle } from 'lucide-react';
+import type { Workspace } from '@/shared/types';
 import { projectRepoHint, projectRepoLabel } from '@/shared/constants/requestTypes';
 import { api } from '@/shared/services/api';
-import { useDiscussionStore } from '@/features/discussions';
-import { useProjectStore } from '../store';
-import { CreateProjectModal } from './CreateProjectModal';
+import { useWorkspaceStore, tasksForWorkspace } from '@/features/workspace';
+import { useTaskList } from '@/shared/hooks/useTaskList';
+import { useWorkspaceCatalogStore } from '../store';
+import { CreateWorkspaceModal } from './CreateProjectModal';
 import { ProjectFilesPanel } from './ProjectFilesPanel';
+import { WorkspaceSkillsPanel } from '@/features/playbooks';
 import './ProjectDetailPage.css';
 
-export function ProjectDetailPage() {
-  const { projectId } = useParams<{ projectId: string }>();
+export function WorkspaceDetailPage() {
+  const { workspaceId } = useParams<{ workspaceId: string }>();
   const navigate = useNavigate();
-  const { createDiscussion } = useDiscussionStore();
-  const { getProjectById } = useProjectStore();
+  const { getWorkspaceById } = useWorkspaceCatalogStore();
 
-  const [project, setProject] = useState<Project | null>(null);
-  const [discussions, setDiscussions] = useState<Discussion[]>([]);
+  const [workspace, setWorkspace] = useState<Workspace | null>(null);
   const [taskInput, setTaskInput] = useState('');
   const [showEdit, setShowEdit] = useState(false);
   const [notFound, setNotFound] = useState(false);
+  const setActiveWorkspace = useWorkspaceStore((s) => s.setActiveWorkspace);
+  const { tasks, isLoading: tasksLoading } = useTaskList(true);
+  const workspaceRuns = useMemo(
+    () => (workspaceId ? tasksForWorkspace(tasks, workspaceId) : []),
+    [tasks, workspaceId],
+  );
 
-  const loadProject = useCallback(async () => {
-    if (!projectId) return;
+  const loadWorkspace = useCallback(async () => {
+    if (!workspaceId) return;
     try {
-      const cached = getProjectById(projectId);
-      const p = cached ?? (await api.getProject(projectId));
-      setProject(p);
-      const ds = await api.getProjectDiscussions(projectId);
-      setDiscussions(ds);
+      const cached = getWorkspaceById(workspaceId);
+      const row = cached ?? (await api.getWorkspace(workspaceId));
+      setWorkspace(row);
     } catch {
       setNotFound(true);
     }
-  }, [projectId, getProjectById]);
+  }, [workspaceId, getWorkspaceById]);
 
-  useEffect(() => { loadProject(); }, [loadProject]);
+  useEffect(() => { void loadWorkspace(); }, [loadWorkspace]);
 
-  const handleStartTask = async (message?: string) => {
-    if (!projectId) return;
+  useEffect(() => {
+    if (workspaceId) setActiveWorkspace(workspaceId);
+  }, [workspaceId, setActiveWorkspace]);
+
+  const handleStartRun = (message?: string) => {
+    if (!workspaceId) return;
     const text = (message ?? taskInput).trim();
-    const created = await createDiscussion({ project_id: projectId });
-    navigate(`/chat/${created.id}`, text ? { state: { initialMessage: text } } : undefined);
+    setActiveWorkspace(workspaceId);
+    navigate('/runs/new', text ? { state: { initialMessage: text } } : undefined);
   };
 
   if (notFound) {
     return (
       <div className="project-detail">
-        <button className="pd-back" onClick={() => navigate('/hubspaces')}>
-          <ArrowLeft size={16} /> <span>All hubspaces</span>
+        <button className="pd-back" onClick={() => navigate('/workspaces')}>
+          <ArrowLeft size={16} /> <span>All workspaces</span>
         </button>
-        <p className="pd-missing">This hubspace could not be found.</p>
+        <p className="pd-missing">This workspace could not be found.</p>
       </div>
     );
   }
 
-  if (!project) {
+  if (!workspace) {
     return <div className="project-detail"><div className="projects-loading"><div className="spinner" /></div></div>;
   }
 
   return (
     <div className="project-detail">
-      <button className="pd-back" onClick={() => navigate('/hubspaces')}>
-        <ArrowLeft size={16} /> <span>All hubspaces</span>
+      <button className="pd-back" onClick={() => navigate('/workspaces')}>
+        <ArrowLeft size={16} /> <span>All workspaces</span>
       </button>
 
       <div className="pd-layout">
-        {/* Main column */}
         <div className="pd-main">
           <div className="pd-header">
             <div className="pd-header-icon"><FolderKanban size={22} /></div>
             <div className="pd-header-text">
-              <h1 className="pd-name">{project.name}</h1>
-              <span className="pd-type-chip">
-                {projectRepoLabel(project)}
-              </span>
-              <p className="pd-repo-hint">{projectRepoHint(project)}</p>
+              <h1 className="pd-name">{workspace.name}</h1>
+              <span className="pd-type-chip">{projectRepoLabel(workspace)}</span>
+              <p className="pd-repo-hint">{projectRepoHint(workspace)}</p>
             </div>
-            <button className="pd-edit-btn" onClick={() => setShowEdit(true)} title="Edit hubspace">
+            <button className="pd-edit-btn" onClick={() => setShowEdit(true)} title="Edit workspace">
               <Pencil size={16} />
             </button>
           </div>
 
-          {/* Start a task */}
-          <form
-            className="pd-task-input"
-            onSubmit={e => { e.preventDefault(); handleStartTask(); }}
-          >
+          <form className="pd-task-input" onSubmit={e => { e.preventDefault(); handleStartRun(); }}>
             <input
               className="pd-task-field"
-              placeholder="Start a task in this hubspace"
+              placeholder="Describe what to build in this workspace…"
               value={taskInput}
               onChange={e => setTaskInput(e.target.value)}
             />
-            <button type="submit" className="pd-task-send" title="Start task">
+            <button type="submit" className="pd-task-send" title="New run">
               <ArrowUp size={18} />
             </button>
           </form>
 
-          {/* Tasks list */}
           <div className="pd-tasks">
-            <h2 className="pd-section-title">Tasks</h2>
-            <p className="pd-section-hint">Factory runs started from this hubspace.</p>
-            {discussions.length === 0 ? (
-              <p className="pd-tasks-empty">No tasks yet — start one above.</p>
+            <h2 className="pd-section-title">Runs</h2>
+            <p className="pd-section-hint">
+              Multiple runs in this workspace coordinate toward the same project — each opens in the IDE with streaming and HITL.
+            </p>
+            {tasksLoading && workspaceRuns.length === 0 ? (
+              <div className="projects-loading"><div className="spinner" /></div>
+            ) : workspaceRuns.length === 0 ? (
+              <p className="pd-tasks-empty">No runs yet — describe a build above.</p>
             ) : (
               <div className="pd-task-list">
-                {discussions.map(d => (
+                {workspaceRuns.map((run) => (
                   <button
-                    key={d.id}
+                    key={run.task_id}
                     className="pd-task-item"
-                    onClick={() => {
-                      if (d.task_id) navigate(`/runs/${d.task_id}`);
-                      else navigate(`/chat/${d.id}`);
-                    }}
+                    onClick={() => navigate(`/runs/${run.task_id}`)}
                   >
-                    <MessageSquare size={15} className="pd-task-item-icon" />
+                    <PlayCircle size={15} className="pd-task-item-icon" />
                     <span className="pd-task-item-title">
-                      {d.title || d.messages?.[0]?.content?.slice(0, 40) || 'New task'}
+                      {run.goal?.trim().slice(0, 60) || run.task_id}
                     </span>
-                    <span className="pd-task-item-date">
-                      {new Date(d.updated_at).toLocaleDateString()}
-                    </span>
+                    <span className="pd-task-item-date">{run.status}</span>
                   </button>
                 ))}
               </div>
@@ -129,34 +128,27 @@ export function ProjectDetailPage() {
           </div>
         </div>
 
-        {/* Right rail */}
         <aside className="pd-rail">
           <div className="pd-rail-card">
-            <h3 className="pd-rail-title">Instructions</h3>
+            <h3 className="pd-rail-title">Brief</h3>
             <p className="pd-rail-body">
-              {project.instructions || 'No instructions yet. Edit the hubspace to add a theme/brief.'}
+              {workspace.instructions ||
+                'No brief yet. Edit the workspace to add a theme or conventions for coordinating runs.'}
             </p>
           </div>
 
-          <ProjectFilesPanel project={project} />
+          <ProjectFilesPanel project={workspace} />
+
+          {workspaceId && <WorkspaceSkillsPanel workspaceId={workspaceId} />}
 
           <div className="pd-rail-card pd-rail-disabled">
-            <h3 className="pd-rail-title"><Puzzle size={15} /> Skills</h3>
-            <p className="pd-rail-body">Reusable workflows — coming soon.</p>
-          </div>
-
-          <div className="pd-rail-card pd-rail-disabled">
-            <h3 className="pd-rail-title"><CalendarClock size={15} /> Scheduled tasks</h3>
-            <p className="pd-rail-body">Run tasks on a schedule — coming soon.</p>
+            <h3 className="pd-rail-title"><CalendarClock size={15} /> Scheduled runs</h3>
+            <p className="pd-rail-body">Run on a schedule — coming soon.</p>
           </div>
         </aside>
       </div>
 
-      <CreateProjectModal
-        isOpen={showEdit}
-        onClose={() => setShowEdit(false)}
-        project={project}
-      />
+      <CreateWorkspaceModal isOpen={showEdit} onClose={() => setShowEdit(false)} workspace={workspace} />
     </div>
   );
 }

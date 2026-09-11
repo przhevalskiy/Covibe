@@ -20,10 +20,9 @@ import {
 import { gantryClient, type AgentCatalog, type CrewAgent } from '@/shared/services/gantry/client';
 import {
   FACTORY_CAPABILITIES,
-  PLAYBOOK_OPTIONS,
   RUN_SIZE_OPTIONS,
-  playbookHint,
 } from '@/shared/constants/runConfig';
+import { usePlaybookStore } from '@/features/playbooks';
 import {
   DISABLEABLE_AGENTS,
   getPipelineDefaults,
@@ -73,12 +72,18 @@ export function AgentsPage() {
   const [defaults, setDefaults] = useState<PipelineDefaults>(() => getPipelineDefaults());
   const [saved, setSaved] = useState(false);
   const [showAdvanced, setShowAdvanced] = useState(false);
+  const playbookOptions = usePlaybookStore(s => s.asOptions());
+  const fetchPlaybooks = usePlaybookStore(s => s.fetchPlaybooks);
+  const hintFor = usePlaybookStore(s => s.hintFor);
 
   useEffect(() => {
     let cancelled = false;
     (async () => {
       try {
-        const data = await gantryClient.listAgents();
+        const [data] = await Promise.all([
+          gantryClient.listAgents(),
+          fetchPlaybooks(),
+        ]);
         if (!cancelled) setCatalog(data);
       } catch (err) {
         if (!cancelled) setError((err as Error).message);
@@ -89,7 +94,7 @@ export function AgentsPage() {
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [fetchPlaybooks]);
 
   const toggleTeamMember = (id: string, included: boolean) => {
     setDefaults(prev => {
@@ -142,12 +147,12 @@ export function AgentsPage() {
           <Settings2 size={18} />
           <h2>Default run profile</h2>
         </div>
-        <p className="agents-card-lead">Applied when you submit a goal from New Task or a hubspace.</p>
+        <p className="agents-card-lead">Applied when you submit a goal from New run or a workspace.</p>
 
         <div className="agents-playbooks">
-          <span className="agents-label">Playbook</span>
+          <span className="agents-label">Skill</span>
           <div className="agents-playbook-grid">
-            {PLAYBOOK_OPTIONS.map(opt => (
+            {playbookOptions.map(opt => (
               <button
                 key={opt.id || 'general'}
                 type="button"
@@ -161,7 +166,7 @@ export function AgentsPage() {
               </button>
             ))}
           </div>
-          <p className="agents-run-size-hint">{playbookHint(defaults.playbook || null)}</p>
+          <p className="agents-run-size-hint">{hintFor(defaults.playbook || null)}</p>
         </div>
 
         <div className="agents-run-size">

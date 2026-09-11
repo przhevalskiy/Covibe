@@ -1,4 +1,6 @@
-/** UI mirror of server playbooks + tier labels (see project/schema/playbooks.py). */
+import { usePlaybookStore } from '@/features/playbooks';
+
+/** UI mirror of server playbooks + tier labels (see schemas/playbooks.py). */
 
 export const RUN_SIZE_OPTIONS = [
   { value: -1, label: 'Automatic', hint: 'Classify each goal, then pick tracks, checks, and approvals.' },
@@ -8,30 +10,12 @@ export const RUN_SIZE_OPTIONS = [
   { value: 3, label: 'Full', hint: 'Max parallelism, full crew, deploy sign-off before PR.' },
 ] as const;
 
+/** @deprecated Load playbooks from usePlaybookStore().asOptions() — server-backed /v1/playbooks */
 export const PLAYBOOK_OPTIONS = [
-  {
-    id: '',
-    label: 'General',
-    hint: 'No playbook preset — tier and pipeline defaults only.',
-  },
-  {
-    id: 'platform-backlog',
-    label: 'Backlog drain',
-    hint: 'Small scoped changes: light tier, single track, backlog branch prefix.',
-  },
-  {
-    id: 'a11y-remediation',
-    label: 'Accessibility',
-    hint: 'WCAG-oriented fixes with an extra a11y oracle before the PR.',
-  },
-  {
-    id: 'monorepo-slice',
-    label: 'Monorepo slice',
-    hint: 'Package-boundary parallel tracks with conflict resolution.',
-  },
+  { id: '', label: 'General', hint: 'No skill preset — tier and pipeline defaults only.' },
 ] as const;
 
-export type PlaybookId = (typeof PLAYBOOK_OPTIONS)[number]['id'];
+export type PlaybookId = string;
 
 export function runSizeLabel(tier: number): string {
   return RUN_SIZE_OPTIONS.find(o => o.value === tier)?.label ?? `Tier ${tier}`;
@@ -43,12 +27,13 @@ export function runSizeHint(tier: number): string | undefined {
 
 export function playbookLabel(id: string | null | undefined): string {
   if (!id) return 'General';
-  return PLAYBOOK_OPTIONS.find(o => o.id === id)?.label ?? id;
+  const label = usePlaybookStore.getState().labelFor(id);
+  return label !== id ? label : id;
 }
 
 export function playbookHint(id: string | null | undefined): string | undefined {
   if (!id) return PLAYBOOK_OPTIONS[0].hint;
-  return PLAYBOOK_OPTIONS.find(o => o.id === id)?.hint;
+  return usePlaybookStore.getState().hintFor(id);
 }
 
 /** Short bullets shown in UI — maps to engine capabilities. */
