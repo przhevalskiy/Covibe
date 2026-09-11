@@ -19,24 +19,24 @@ MODULARIZATION.md — this file
 
 ---
 
-## Priority 1 — `workflows/swarm_orchestrator.py` (1,765 lines)
+## Priority 1 — `workflows/swarm_orchestrator.py` (~310 lines, was 1,765)
 
-The single biggest file in the repo. It mixes five distinct concerns.
+Split complete. Foreman is a thin coordinator; pipeline stages live in `swarm/pipeline.py`.
 
-**Target structure:**
+**Current structure:**
 
 ```
 workflows/
-  swarm_orchestrator.py          # thin coordinator (~300 lines)
-                                 # keeps: signal handlers, run(), activity dispatch
+  swarm_orchestrator.py          # Foreman coordinator (~310 lines)
   swarm/
-    __init__.py
-    track_manager.py             # extract_tracks, order_by_dependency,
-                                 # resolve_conflicts, plan_track (~400 lines)
-    healing.py                   # heal cycles, re-plan loop, failure recovery (~300 lines)
-    state.py                     # snapshots, continuation, result accumulation (~250 lines)
-    reporting.py                 # final report assembly, quality scoring call,
-                                 # PR comment formatting (~200 lines)
+    pipeline.py                  # ✓ PM → Architect → Builders → Inspector → Security → DevOps
+    track_manager.py             # ✓ track extraction, ordering, conflicts
+    healing.py                   # ✓ heal parsing helpers
+    state.py                     # ✓ manifest / snapshots
+    reporting.py                 # ✓ final report + quality comment
+    repo_setup.py                # ✓ clone / init / auto-create GitHub repo
+    hitl.py                      # ✓ HITL payload builders
+    completion.py                # ✓ structured result + episode payloads
 ```
 
 **How to split:**

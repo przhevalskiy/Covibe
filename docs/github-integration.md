@@ -1,34 +1,34 @@
 # GitHub Issues Integration
 
-Label any GitHub issue `gantry` and Monolift opens a PR. No code required.
+Label any GitHub issue `gantry` and Gantry opens a PR. No code required.
 
 ---
 
 ## How it works
 
 1. You add the `gantry` label to an open issue
-2. Monolift reads the issue title + body as the engineering goal
+2. Gantry reads the issue title + body as the engineering goal
 3. The swarm runs — PM, Architect, Builders, Inspector, Security, DevOps
 4. A PR opens on your repo
-5. Monolift comments on the issue with the PR link
+5. Gantry comments on the issue with the PR link
 6. Remove the `gantry` label at any point to terminate the running task
 
 ---
 
 ## Prerequisites
 
-- A Monolift account with an API key
-- A Monolift project linked to your GitHub repo (see step 1)
+- A Gantry account with an API key
+- A Gantry project linked to your GitHub repo (see step 1)
 - Admin access to the GitHub repo (to add webhooks)
 
 ---
 
-## Step 1 — Link your repo to a Monolift project
+## Step 1 — Link your repo to a Gantry project
 
 If you haven't created a project yet:
 
 ```bash
-curl -X POST https://api.monolift.dev/v1/projects \
+curl -X POST https://api.gantry.dev/v1/projects \
   -H "Authorization: Bearer $GANTRY_API_KEY" \
   -H "Content-Type: application/json" \
   -d '{
@@ -47,7 +47,7 @@ In your GitHub repo: **Settings → Webhooks → Add webhook**
 
 | Field | Value |
 |---|---|
-| Payload URL | `https://api.monolift.dev/v1/integrations/github/webhook` |
+| Payload URL | `https://api.gantry.dev/v1/integrations/github/webhook` |
 | Content type | `application/json` |
 | Secret | Your `GITHUB_WEBHOOK_SECRET` value (same as on the server) |
 | Events | Select **"Let me select individual events"** → check **Issues** only |
@@ -100,7 +100,7 @@ Steps to reproduce:
 1. Label an issue gantry
 2. Wait for the "task is running" comment
 3. Remove the label
-4. Task keeps running in the Monolift dashboard
+4. Task keeps running in the Gantry dashboard
 ```
 
 ---
@@ -110,22 +110,22 @@ Steps to reproduce:
 **No comment appears after labeling**
 
 - Check the webhook delivery log: GitHub repo → Settings → Webhooks → click the webhook → Recent Deliveries
-- A 401 means the webhook secret is wrong — regenerate it and update both GitHub and `/opt/monolift/.env`
-- A 502 means the Monolift API is down — check `sudo systemctl status gantry-api` on the server
+- A 401 means the webhook secret is wrong — regenerate it and update both GitHub and `/opt/gantry/.env`
+- A 502 means the Gantry API is down — check `sudo systemctl status gantry-api` on the server
 
 **"No Gantry project linked" in the webhook response**
 
 The project's `github_owner`/`github_repo` doesn't match the repo sending the event. Verify:
 
 ```bash
-curl https://api.monolift.dev/v1/projects \
+curl https://api.gantry.dev/v1/projects \
   -H "Authorization: Bearer $GANTRY_API_KEY" | jq '.projects[] | {id, name, github_owner, github_repo}'
 ```
 
 Update if needed:
 
 ```bash
-curl -X PATCH https://api.monolift.dev/v1/projects/<project_id> \
+curl -X PATCH https://api.gantry.dev/v1/projects/<project_id> \
   -H "Authorization: Bearer $GANTRY_API_KEY" \
   -H "Content-Type: application/json" \
   -d '{"github_url": "https://github.com/correct-org/correct-repo"}'
@@ -133,7 +133,7 @@ curl -X PATCH https://api.monolift.dev/v1/projects/<project_id> \
 
 **Task runs but no PR is opened**
 
-Check the Monolift dashboard for the task — the agent feed will show where it stopped. Common causes:
+Check the Gantry dashboard for the task — the agent feed will show where it stopped. Common causes:
 - The repo's default branch is protected and the bot's GitHub token doesn't have push access
 - The GH_TOKEN on the server doesn't have `repo` scope — regenerate with full `repo` permissions
 
@@ -151,7 +151,7 @@ Look for `github_callback_posted` or `github_callback_failed` log lines.
 
 ## Supported events
 
-| Event | Action | Monolift behavior |
+| Event | Action | Gantry behavior |
 |---|---|---|
 | `issues` | `labeled` with `gantry` | Submit task, post start comment |
 | `issues` | `unlabeled` with `gantry` | Terminate running task |

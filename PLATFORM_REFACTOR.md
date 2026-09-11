@@ -12,7 +12,7 @@ These rules are non-negotiable across every phase. Violating any one is a regres
 |---|---|---|
 | I1 | **API works without the UI** | Platform customers never depend on Vercel or Next.js for core operations |
 | I2 | **Every resource is org-scoped** | API key → org → projects/tasks/keys. No cross-tenant reads or writes |
-| I3 | **Structured results, not message scraping** | Integrators get `result.pr_url`, `result.branch`, etc. — never regex over agent chat |
+| I3 | **Structured results, not message scraping** | Integrators get `result.pr_url`, `result.branch`, etc. — worker `db_upsert_build` is primary; poller message scrape is legacy fallback only ([`docs/platform/event-model.md`](docs/platform/event-model.md)) |
 | I4 | **Secrets shown once** | API key plaintext returned only at creation; only hashes stored |
 | I5 | **Idempotent migrations** | All SQL uses `IF NOT EXISTS` / safe `ALTER`; migrate script is re-runnable |
 | I6 | **Local dev works without Postgres** | File-backed fallback when `DATABASE_URL` is unset; same API surface |

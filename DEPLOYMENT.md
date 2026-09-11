@@ -1,4 +1,4 @@
-# Monolift — Deployment Checklist
+# Gantry — Deployment Checklist
 
 Production stack: **Vercel** (UI, free) + **Hetzner CX22** (API, worker, Agentex, Temporal — $4.50/mo)
 
@@ -8,20 +8,20 @@ Production stack: **Vercel** (UI, free) + **Hetzner CX22** (API, worker, Agentex
 
 - [ ] **Hetzner account** — [console.hetzner.cloud](https://console.hetzner.cloud)
 - [ ] **Vercel account** — [vercel.com](https://vercel.com) (sign in with GitHub)
-- [ ] **Domain** — buy `monolift.dev` on Namecheap / Cloudflare / wherever
+- [ ] **Domain** — buy `gantry.dev` on Namecheap / Cloudflare / wherever
 - [ ] **GitHub repo** — ensure this repo is pushed and set to the visibility you want
 
 ---
 
 ## 2. Hetzner — Provision Server
 
-1. Create new project: `monolift-prod`
+1. Create new project: `gantry-prod`
 2. Create server:
    - **Location**: Falkenstein or Helsinki (lower latency to EU)
    - **Image**: Ubuntu 22.04
    - **Type**: CX22 (2 vCPU, 4 GB RAM) — upgrade to CX32 if agents start timing out
    - **SSH key**: add your public key (`~/.ssh/id_ed25519.pub`)
-   - **Name**: `monolift-prod`
+   - **Name**: `gantry-prod`
 3. Note the public IPv4 address (call it `<SERVER_IP>`)
 
 ---
@@ -32,9 +32,9 @@ In your domain registrar / DNS provider, add:
 
 | Type | Name                  | Value          |
 |------|-----------------------|----------------|
-| A    | `api.monolift.dev`    | `<SERVER_IP>`  |
-| A    | `platform.monolift.dev` | `<SERVER_IP>` |
-| A    | `app.monolift.dev`    | (Vercel — auto-set in step 6) |
+| A    | `api.gantry.dev`    | `<SERVER_IP>`  |
+| A    | `platform.gantry.dev` | `<SERVER_IP>` |
+| A    | `app.gantry.dev`    | (Vercel — auto-set in step 6) |
 
 DNS propagation takes 0–30 minutes.
 
@@ -48,22 +48,22 @@ SSH in and run the setup script:
 ssh root@<SERVER_IP>
 
 # Option A — if the repo is public:
-REPO_URL=https://github.com/YOUR_ORG/monolift.git \
-DOMAIN_API=api.monolift.dev \
-DOMAIN_PLATFORM=platform.monolift.dev \
-EMAIL_CERTBOT=ops@monolift.dev \
-bash <(curl -fsSL https://raw.githubusercontent.com/YOUR_ORG/monolift/main/deploy/setup.sh)
+REPO_URL=https://github.com/YOUR_ORG/gantry.git \
+DOMAIN_API=api.gantry.dev \
+DOMAIN_PLATFORM=platform.gantry.dev \
+EMAIL_CERTBOT=ops@gantry.dev \
+bash <(curl -fsSL https://raw.githubusercontent.com/YOUR_ORG/gantry/main/deploy/setup.sh)
 
 # Option B — copy script manually:
 scp deploy/setup.sh root@<SERVER_IP>:~/
 ssh root@<SERVER_IP> \
-  REPO_URL=https://github.com/YOUR_ORG/monolift.git bash setup.sh
+  REPO_URL=https://github.com/YOUR_ORG/gantry.git bash setup.sh
 ```
 
 The script will:
 - Install Docker, Python 3.12, uv, nginx, certbot
-- Create `monolift` system user
-- Clone the repo to `/opt/monolift`
+- Create `gantry` system user
+- Clone the repo to `/opt/gantry`
 - Set up Python virtualenv and install dependencies
 - Start Agentex Docker stack (Temporal, Redis, Postgres, MongoDB)
 - Install and enable `gantry-api` and `gantry-worker` systemd services
@@ -74,11 +74,11 @@ The script will:
 
 ## 5. Configure Environment Variables
 
-The script copies `.env.production.example` to `/opt/monolift/.env` if no `.env` exists. Fill it in:
+The script copies `.env.production.example` to `/opt/gantry/.env` if no `.env` exists. Fill it in:
 
 ```bash
-ssh monolift@<SERVER_IP>
-nano /opt/monolift/.env
+ssh gantry@<SERVER_IP>
+nano /opt/gantry/.env
 ```
 
 Required values to fill in:
@@ -101,7 +101,7 @@ Verify:
 ```bash
 sudo systemctl status gantry-api
 sudo systemctl status gantry-worker
-curl https://api.monolift.dev/health
+curl https://api.gantry.dev/health
 ```
 
 ---
@@ -116,10 +116,10 @@ curl https://api.monolift.dev/health
 
 | Variable | Value |
 |----------|-------|
-| `VITE_GANTRY_API_URL` | `https://api.monolift.dev` |
+| `VITE_GANTRY_API_URL` | `https://api.gantry.dev` |
 
 6. Click **Deploy**
-7. Add custom domain: `app.monolift.dev`
+7. Add custom domain: `app.gantry.dev`
    - Vercel will give you DNS records to add (usually a CNAME)
    - SSL is automatic
 
@@ -132,7 +132,7 @@ Local dev UI: `cd apps/web && npm run dev` (Vite `:5173`, proxies `/v1` → API)
 In the GitHub repo you want to wire up:
 
 1. Settings → Webhooks → Add webhook
-2. **Payload URL**: `https://api.monolift.dev/github/webhook`
+2. **Payload URL**: `https://api.gantry.dev/github/webhook`
 3. **Content type**: `application/json`
 4. **Secret**: same value as `GITHUB_WEBHOOK_SECRET` in `.env`
 5. **Events**: select "Issues" (and optionally "Issue comments")
@@ -147,7 +147,7 @@ Test it: add the `gantry` label to any open issue. Within ~30 seconds a comment 
 SSH into the server and create a key:
 
 ```bash
-ssh monolift@<SERVER_IP>
+ssh gantry@<SERVER_IP>
 curl -s -X POST http://localhost:8001/keys \
   -H "Content-Type: application/json" \
   -d '{"name": "my-first-key"}' | jq .
@@ -161,13 +161,13 @@ Copy the returned `key` value — it's shown only once.
 
 ```bash
 # Health
-curl https://api.monolift.dev/health
+curl https://api.gantry.dev/health
 
 # Swagger UI
-open https://api.monolift.dev/docs
+open https://api.gantry.dev/docs
 
 # Submit a task
-curl -X POST https://api.monolift.dev/tasks \
+curl -X POST https://api.gantry.dev/tasks \
   -H "Authorization: Bearer gantry_<your-key>" \
   -H "Content-Type: application/json" \
   -d '{
@@ -187,14 +187,14 @@ curl -X POST https://api.monolift.dev/tasks \
 ```bash
 sudo journalctl -u gantry-api -f
 sudo journalctl -u gantry-worker -f
-docker compose -f /opt/monolift/deploy/docker-compose.prod.yml logs -f agentex
+docker compose -f /opt/gantry/deploy/docker-compose.prod.yml logs -f agentex
 ```
 
 ### Deploy a new version
 
 ```bash
-ssh monolift@<SERVER_IP>
-cd /opt/monolift
+ssh gantry@<SERVER_IP>
+cd /opt/gantry
 git pull
 source .venv/bin/activate
 uv pip install -e '.[api]' --quiet
@@ -204,8 +204,8 @@ sudo systemctl restart gantry-api gantry-worker
 ### Restart Agentex stack
 
 ```bash
-ssh monolift@<SERVER_IP>
-docker compose -f /opt/monolift/deploy/docker-compose.prod.yml restart
+ssh gantry@<SERVER_IP>
+docker compose -f /opt/gantry/deploy/docker-compose.prod.yml restart
 ```
 
 ### Renew SSL (auto via cron, but manually if needed)
@@ -225,7 +225,7 @@ Browser / API clients
   Vercel (free)                    Hetzner CX22 ($4.50/mo)
   ┌──────────────┐                 ┌────────────────────────────────────┐
   │  Next.js UI  │ ──HTTPS──────▶ │  nginx (SSL)                       │
-  │  app.mono..  │                 │    api.monolift.dev  → :8001        │
+  │  app.mono..  │                 │    api.gantry.dev  → :8001        │
   └──────────────┘                 │    platform.mono..  → :5003        │
                                    │                                    │
                                    │  gantry-api (systemd)   :8001      │
