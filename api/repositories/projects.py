@@ -45,7 +45,9 @@ def _row_to_project(row: dict) -> dict:
         "github_repo": row.get("github_repo"),
         "linear_team_id": row.get("linear_team_id"),
         "jira_project_key": row.get("jira_project_key"),
+        "instructions": row.get("instructions"),
         "created_at": row["created_at"].isoformat() if hasattr(row.get("created_at"), "isoformat") else row.get("created_at"),
+        "updated_at": row["updated_at"].isoformat() if hasattr(row.get("updated_at"), "isoformat") else row.get("updated_at"),
     }
 
 
@@ -153,6 +155,7 @@ async def create_project(
     github_url: str | None = None,
     linear_team_id: str | None = None,
     jira_project_key: str | None = None,
+    instructions: str | None = None,
 ) -> dict:
     name = name.strip()
     if not name:
@@ -182,15 +185,16 @@ async def create_project(
             INSERT INTO projects (
                 id, org_id, user_id, name, slug, repo_path,
                 github_url, github_owner, github_repo,
-                linear_team_id, jira_project_key
+                linear_team_id, jira_project_key, instructions
             )
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
             RETURNING *
             """,
             (
                 str(uuid4()), org, user_id, name, slug, repo_path,
                 github_url or None, gh.get("github_owner"), gh.get("github_repo"),
                 linear_team_id, jira_project_key.upper() if jira_project_key else None,
+                instructions.strip() if instructions else None,
             ),
         )
         return _row_to_project(row)
@@ -216,6 +220,7 @@ async def create_project(
         **({"github_url": github_url, **gh} if github_url else {}),
         **({"linear_team_id": linear_team_id} if linear_team_id else {}),
         **({"jira_project_key": jira_project_key.upper()} if jira_project_key else {}),
+        **({"instructions": instructions.strip()} if instructions and instructions.strip() else {}),
     }
     projects.append(project)
     _save_registry(projects)
@@ -231,6 +236,7 @@ async def update_project(
     github_url: str | None = None,
     linear_team_id: str | None = None,
     jira_project_key: str | None = None,
+    instructions: str | None = None,
 ) -> dict | None:
     project = await get_project(project_id, org_id=org_id, user_id=user_id)
     if not project:
@@ -248,6 +254,8 @@ async def update_project(
         updates["linear_team_id"] = linear_team_id
     if jira_project_key is not None:
         updates["jira_project_key"] = jira_project_key.upper()
+    if instructions is not None:
+        updates["instructions"] = instructions.strip() or None
 
     if not updates:
         return project

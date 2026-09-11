@@ -3,6 +3,7 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
 from api.deps import require_any_scope, require_scope
+from api.repositories import artifacts as artifacts_repo
 from api.repositories import projects as projects_repo
 from api.services.project_files import project_root, resolve_project_file, walk_project_files
 
@@ -14,6 +15,7 @@ class CreateProjectRequest(BaseModel):
     github_url: str | None = None
     linear_team_id: str | None = None
     jira_project_key: str | None = None
+    instructions: str | None = None
 
 
 class UpdateProjectRequest(BaseModel):
@@ -21,6 +23,7 @@ class UpdateProjectRequest(BaseModel):
     github_url: str | None = None
     linear_team_id: str | None = None
     jira_project_key: str | None = None
+    instructions: str | None = None
 
 
 class WriteProjectFileRequest(BaseModel):
@@ -52,6 +55,7 @@ async def create_project(body: CreateProjectRequest, key: dict = Depends(require
             github_url=body.github_url,
             linear_team_id=body.linear_team_id,
             jira_project_key=body.jira_project_key,
+            instructions=body.instructions,
         )
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc))
@@ -71,10 +75,28 @@ async def update_project(
         github_url=body.github_url,
         linear_team_id=body.linear_team_id,
         jira_project_key=body.jira_project_key,
+        instructions=body.instructions,
     )
     if not project:
         raise HTTPException(status_code=404, detail="project not found")
     return {"project": project}
+
+
+@router.get("/{project_id}/artifacts")
+async def list_project_artifacts(
+    project_id: str,
+    scope: str | None = None,
+    key: dict = Depends(require_any_scope("projects:read", "projects:write")),
+):
+    project = await projects_repo.get_project(project_id, org_id=key["org_id"])
+    if not project:
+        raise HTTPException(status_code=404, detail="project not found")
+    rows = await artifacts_repo.list_artifacts(
+        org_id=key["org_id"],
+        project_id=project_id,
+        scope=scope,
+    )
+    return {"artifacts": rows, "count": len(rows)}
 
 
 @router.get("/{project_id}/files/tree")

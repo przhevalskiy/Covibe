@@ -7,7 +7,7 @@ DEFAULT_BASE_URL = "https://api.gantry.dev"
 
 
 class GantryClient:
-    """Monolift API client.
+    """Gantry API client.
 
     Usage::
 
