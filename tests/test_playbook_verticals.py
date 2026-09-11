@@ -11,12 +11,6 @@ from project.schema.playbooks import (
 )
 from workflows.swarm.track_manager import _resolve_track_conflicts
 
-PLAYBOOK_UI_LABELS = {
-    "platform-backlog": "Platform backlog",
-    "a11y-remediation": "A11y remediation",
-    "monorepo-slice": "Monorepo slice",
-}
-
 REQUIRED_PLAYBOOK_KEYS = frozenset({
     "label",
     "vertical",
@@ -34,13 +28,6 @@ def test_playbook_schema_keys():
         assert not missing, f"{playbook_id} missing {missing}"
         assert spec["pipeline"]["max_parallel_tracks"] >= 1
         assert spec["pipeline"]["max_heal_cycles"] >= 0
-
-
-def test_ui_playbook_labels_match_backend():
-    """G3 — apps/web SubmitPage labels must match PLAYBOOKS (see PLAYBOOK_UI_LABELS)."""
-    assert set(PLAYBOOK_UI_LABELS) == set(PLAYBOOKS)
-    for pid, label in PLAYBOOK_UI_LABELS.items():
-        assert PLAYBOOKS[pid]["label"] == label
 
 
 def test_a11y_oracle_requires_accessibility_checks():

@@ -28,6 +28,30 @@ def test_unknown_playbook_raises():
         )
 
 
+def test_custom_playbook_spec_merges():
+    spec = {
+        "label": "Custom",
+        "tier_default": 2,
+        "branch_prefix": "custom",
+        "goal_prefix": "CUSTOM: ",
+        "pipeline": {"max_parallel_tracks": 2, "max_heal_cycles": 1},
+        "architect_overlay": "Follow platform rules.",
+    }
+    goal, branch, tier, pipeline, pid = resolve_submit_params(
+        goal="Add feature",
+        branch_prefix="swarm",
+        tier=-1,
+        playbook_id="custom-skill",
+        pipeline=None,
+        playbook_spec=spec,
+    )
+    assert pid == "custom-skill"
+    assert branch == "custom"
+    assert tier == 2
+    assert goal.startswith("CUSTOM:")
+    assert architect_prompt_overlay("custom-skill", spec)
+
+
 def test_platform_backlog_merges_defaults():
     goal, branch, tier, pipeline, pid = resolve_submit_params(
         goal="Add pagination",

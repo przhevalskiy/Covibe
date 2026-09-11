@@ -12,6 +12,7 @@ from api.middleware import RateLimitMiddleware
 from api.repositories import keys as keys_repo
 from api.routes import (
     agents,
+    artifacts,
     audit,
     github,
     github_browser,
@@ -21,6 +22,7 @@ from api.routes import (
     keys,
     org_settings,
     org_webhooks,
+    playbooks,
     projects,
     quotas,
     secrets,
@@ -28,6 +30,7 @@ from api.routes import (
     tasks,
     ui_state,
     usage,
+    workspaces,
 )
 from api.routes import projects_db
 from api.services import poller
@@ -77,6 +80,9 @@ app.include_router(projects_db.router)
 app.include_router(ui_state.router)
 app.include_router(keys.router)
 app.include_router(projects.router)
+app.include_router(workspaces.router)
+app.include_router(playbooks.router)
+app.include_router(artifacts.router)
 app.include_router(agents.router)
 app.include_router(tasks.router)
 app.include_router(github.router)

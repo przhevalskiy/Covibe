@@ -1,10 +1,9 @@
 from fastapi import APIRouter, Depends, Header, HTTPException, Request
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 import asyncio
 import json
 import os
-import re
 import structlog
 from pathlib import Path
 
@@ -13,6 +12,7 @@ from api.clients import temporal as temporal_client
 from api.deps import client_ip, require_any_scope, require_scope
 from api.repositories import audit as audit_repo
 from api.repositories import builds as builds_repo
+from api.repositories import playbooks as playbooks_repo
 from api.repositories import projects as projects_repo
 from api.repositories import quotas as quotas_repo
 from api.repositories import tasks as tasks_repo
@@ -30,10 +30,12 @@ from api.schemas.task_sse import (
 )
 from api.services import github_tokens
 from api.services import llm_config as llm_config_service
+from api.services import goal_context
 from api.services import task_events
 from fastapi.responses import StreamingResponse
-from project.schema.crew import autonomy_for_tier, get_checkpoint
-from project.schema.playbooks import resolve_submit_params
+from api.services.task_results import resolve_terminal_result
+from schemas.crew import autonomy_for_tier, get_checkpoint
+from schemas.playbooks import resolve_submit_params
 
 router = APIRouter(prefix="/v1/tasks", tags=["Tasks"])
 log = structlog.get_logger(__name__)
@@ -43,7 +45,8 @@ TERMINAL_STATUSES = {"completed", "failed", "cancelled", "terminated", "timeout"
 
 class SubmitTaskRequest(BaseModel):
     goal: str
-    project_id: str
+    project_id: str | None = None
+    workspace_id: str | None = None
     branch_prefix: str = "swarm"
     tier: int = -1
     playbook: str | None = None
@@ -52,6 +55,16 @@ class SubmitTaskRequest(BaseModel):
     webhook_url: str | None = None
     pipeline: PipelineConfig | None = None
     llm: LlmConfig | None = None
+    artifact_ids: list[str] = Field(default_factory=list)
+    include_workspace_brief: bool = True
+
+    @model_validator(mode="after")
+    def _resolve_workspace_id(self):
+        resolved = self.project_id or self.workspace_id
+        if not resolved:
+            raise ValueError("project_id or workspace_id is required")
+        self.project_id = resolved
+        return self
 
 
 class BulkTaskItem(BaseModel):
@@ -64,7 +77,8 @@ class BulkTaskItem(BaseModel):
 
 
 class BulkSubmitRequest(BaseModel):
-    project_id: str
+    project_id: str | None = None
+    workspace_id: str | None = None
     tasks: list[BulkTaskItem] = Field(..., min_length=1)
     branch_prefix: str = "swarm"
     tier: int = -1
@@ -74,6 +88,14 @@ class BulkSubmitRequest(BaseModel):
     webhook_url: str | None = None
     pipeline: PipelineConfig | None = None
     llm: LlmConfig | None = None
+
+    @model_validator(mode="after")
+    def _resolve_workspace_id(self):
+        resolved = self.project_id or self.workspace_id
+        if not resolved:
+            raise ValueError("project_id or workspace_id is required")
+        self.project_id = resolved
+        return self
 
 
 class HitlRequest(BaseModel):
@@ -86,16 +108,6 @@ class HitlRequest(BaseModel):
 
 class FollowUpRequest(BaseModel):
     prompt: str = Field(..., min_length=1)
-
-
-def _extract_pr_url(messages: list[dict]) -> str | None:
-    for msg in reversed(messages):
-        content = msg.get("content", "")
-        if isinstance(content, str) and "github.com" in content and "/pull/" in content:
-            match = re.search(r"https://github\.com/\S+/pull/\d+", content)
-            if match:
-                return match.group(0)
-    return None
 
 
 async def _verify_project(project_id: str, org_id: str) -> dict:
@@ -117,6 +129,18 @@ async def _resolve_github_token(
         github_token=github_token,
         github_token_secret=github_token_secret,
     )
+
+
+async def _resolve_playbook(org_id: str, playbook: str | None) -> tuple[str | None, dict | None]:
+    """Load org playbook from DB (or system fallback) for submit + worker overlay."""
+    if not playbook:
+        return None, None
+    row = await playbooks_repo.get_playbook(org_id=org_id, playbook_id=playbook)
+    if not row:
+        raise ValueError(f"unknown playbook: {playbook}")
+    spec = playbooks_repo.playbook_to_spec(row)
+    spec["slug"] = row.get("slug") or playbook
+    return row.get("slug") or playbook, spec
 
 
 def _resolve_pipeline_params(
@@ -154,12 +178,14 @@ async def _submit_one(
         project = await _verify_project(project_id, org_id)
         token = await _resolve_github_token(org_id, project, github_token or None, github_token_secret)
         try:
+            playbook_slug, playbook_spec = await _resolve_playbook(org_id, playbook)
             goal, branch_prefix, tier, pipeline_overlay, playbook_id = resolve_submit_params(
                 goal=goal,
                 branch_prefix=branch_prefix,
                 tier=tier,
-                playbook_id=playbook,
+                playbook_id=playbook_slug,
                 pipeline=pipeline.model_dump(exclude_unset=True) if pipeline else None,
+                playbook_spec=playbook_spec,
             )
         except ValueError as exc:
             return {"goal": goal, "error": str(exc)}
@@ -172,6 +198,8 @@ async def _submit_one(
             extra_params = {**extra_params, **llm_params}
         if playbook_id:
             extra_params = {**(extra_params or {}), "playbook": playbook_id}
+        if playbook_spec:
+            extra_params = {**(extra_params or {}), "playbook_spec": playbook_spec}
         if project.get("repo_path"):
             extra_params = {**(extra_params or {}), "repo_path": project["repo_path"]}
         if project.get("github_url"):
@@ -218,12 +246,11 @@ async def _build_task_response(task_id: str, org_id: str, agentex_task: dict, me
     result = await tasks_repo.get_task_result(task_id, org_id=org_id)
 
     if not result and status in TERMINAL_STATUSES:
-        pr_url = _extract_pr_url(messages)
-        if pr_url or meta.get("pr_url"):
-            result = {
-                "pr_url": pr_url or meta.get("pr_url"),
-                "branch": meta.get("branch"),
-            }
+        result = await resolve_terminal_result(
+            task_id,
+            org_id=org_id,
+            messages=messages,
+        ) or None
 
     return {
         "task_id": task_id,
@@ -264,8 +291,16 @@ async def submit_task(
     except QuotaExceeded as exc:
         raise HTTPException(status_code=429, detail=str(exc))
 
+    effective_goal = await goal_context.build_effective_goal(
+        body.goal,
+        project_id=body.project_id,
+        org_id=key["org_id"],
+        artifact_ids=body.artifact_ids or None,
+        include_workspace_brief=body.include_workspace_brief,
+    )
+
     result = await _submit_one(
-        goal=body.goal,
+        goal=effective_goal,
         project_id=body.project_id,
         org_id=key["org_id"],
         branch_prefix=body.branch_prefix,

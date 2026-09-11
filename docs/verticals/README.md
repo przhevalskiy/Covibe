@@ -1,6 +1,6 @@
 # Vertical playbooks (M4)
 
-Verticals are **config overlays** on the same Foreman pipeline — no workflow forks. Playbook ids are accepted on `POST /v1/tasks` and merged into tier, branch prefix, and pipeline defaults.
+Verticals are **config overlays** on the same Foreman pipeline — no workflow forks. Playbooks (Skills) are **org-scoped** via `GET/POST /v1/playbooks`; built-in examples are seeded, not hardcoded in the worker. Submit with `playbook: "<slug>"` on `POST /v1/tasks`.
 
 ## Horizontal matrix
 
