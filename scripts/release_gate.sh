@@ -41,8 +41,18 @@ rg "agentName: swarm-factory" deploy/helm/gantry/values.yaml >/dev/null
 echo "==> invariant: legacy ui/ removed"
 test ! -d ui
 
-echo "==> invariant: DEPLOYMENT points to apps/web"
+echo "==> invariant: DEPLOY points to apps/web"
 rg "Root Directory.*apps/web" DEPLOYMENT.md >/dev/null || rg "root \`apps/web\`" DEPLOYMENT.md >/dev/null
+
+echo "==> invariant: deploy module + vercel SPA"
+test -f apps/web/src/deploy/invariants.ts
+test -f apps/web/vercel.json
+test -f docs/hosting/PLAN.md
+test -x deploy/smoke.sh
+rg '"destination": "/index.html"' apps/web/vercel.json >/dev/null
+
+echo "==> CORS config tests"
+.venv/bin/python -m pytest tests/test_cors_config.py -q
 
 echo "==> invariant: M1 clean in apps/web/src"
 if rg -i "hive_api|ga4_property|show_checklist|marcomms|web_services|media_outreach|press release request" apps/web/src >/dev/null 2>&1; then

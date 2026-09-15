@@ -13,7 +13,8 @@ GANTRY_WEB_URL: str = os.getenv(
 GANTRY_UI_URL: str = GANTRY_WEB_URL  # backward compat
 TEMPORAL_ADDRESS: str = os.getenv("TEMPORAL_ADDRESS", "localhost:7233")
 TEMPORAL_NAMESPACE: str = os.getenv("TEMPORAL_NAMESPACE", "default")
-GANTRY_AGENT_NAME: str = os.getenv("GANTRY_AGENT_NAME", os.getenv("AGENT_NAME", "swarm-factory"))
+# Factory agent for task submit (distinct from worker AGENT_NAME in .env)
+GANTRY_AGENT_NAME: str = os.getenv("GANTRY_AGENT_NAME", "swarm-factory")
 AGENT_NAME: str = GANTRY_AGENT_NAME
 
 # Webhook signing secret — generated once, stored in ~/.gantry/webhook_secret
@@ -54,5 +55,61 @@ GANTRY_INSTALL_STATE_SECRET: str = os.getenv(
 # Fernet key for org secrets — generate with: python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
 GANTRY_SECRETS_KEY: str = os.getenv("GANTRY_SECRETS_KEY", "")
 
+# Comma-separated browser origins allowed to call the API (UI on Vercel + previews).
+# Supports exact origins and preview wildcards: https://*.vercel.app
+# Falls back to GANTRY_WEB_URL when unset. Local dev uses localhost when bypass is on.
+GANTRY_CORS_ORIGINS: str = os.getenv("GANTRY_CORS_ORIGINS", "")
+
 # Clerk — required for auth in production
 CLERK_SECRET_KEY: str = os.getenv("CLERK_SECRET_KEY", "")
+
+
+def _parse_cors_entry(entry: str) -> tuple[str | None, str | None]:
+    """Return (exact_origin, origin_regex) for one CORS config entry."""
+    import re
+
+    item = entry.strip().rstrip("/")
+    if not item:
+        return None, None
+
+    wildcard = re.match(r"^(https?)://\*\.(.+)$", item)
+    if wildcard:
+        scheme = wildcard.group(1)
+        suffix = re.escape(wildcard.group(2).lstrip("."))
+        pattern = rf"{scheme}://[\w.-]+\.{suffix}"
+        return None, pattern
+
+    return item, None
+
+
+def cors_settings() -> tuple[list[str], str | None]:
+    """Origins for FastAPI CORSMiddleware."""
+    exact: list[str] = []
+    patterns: list[str] = []
+
+    raw = GANTRY_CORS_ORIGINS.strip()
+    if raw:
+        for part in raw.split(","):
+            origin, pattern = _parse_cors_entry(part)
+            if origin:
+                exact.append(origin)
+            if pattern:
+                patterns.append(pattern)
+        if exact or patterns:
+            regex = "|".join(f"(?:{p})" for p in patterns) if patterns else None
+            return exact, regex
+
+    web = GANTRY_WEB_URL.strip().rstrip("/")
+    if web and web not in ("http://localhost:5173", "http://127.0.0.1:5173"):
+        return [web], None
+
+    if GANTRY_DEV_AUTH_BYPASS:
+        return ["http://localhost:5173", "http://127.0.0.1:5173"], None
+
+    return [], None
+
+
+def cors_allow_origins() -> list[str]:
+    """Backward-compatible helper — exact origins only."""
+    exact, _ = cors_settings()
+    return exact

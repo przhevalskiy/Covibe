@@ -2,6 +2,8 @@
 
 Production stack: **Vercel** (UI, free) + **Hetzner CX22** (API, worker, Agentex, Temporal — $4.50/mo)
 
+**Planning:** phased checklist and env matrix → [`docs/hosting/PLAN.md`](docs/hosting/PLAN.md)
+
 ---
 
 ## 1. Prerequisites (one-time accounts)
@@ -89,6 +91,8 @@ Required values to fill in:
 | `GH_TOKEN` | GitHub → Settings → Developer settings → PAT (classic), scopes: `repo`, `issues`, `pull_requests` |
 | `GITHUB_WEBHOOK_SECRET` | Run: `openssl rand -hex 32` |
 | `INTERNAL_API_KEY` | Run: `openssl rand -hex 32` |
+| `GANTRY_WEB_URL` | `https://app.gantry.dev` (your Vercel app URL) |
+| `GANTRY_CORS_ORIGINS` | Same as web URL(s), comma-separated — include Vercel preview domain if needed |
 
 After editing:
 

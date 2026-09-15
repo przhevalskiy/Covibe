@@ -142,7 +142,9 @@ chown -R "$GANTRY_USER:$GANTRY_USER" "$AGENTEX_DIR/temporal"
 
 # ── Docker Compose (Agentex stack) ────────────────────────────────────────────
 log "Starting Agentex Docker stack"
+echo "GANTRY_HOME=$GANTRY_HOME" > "$GANTRY_HOME/deploy/.env"
 sudo -u "$GANTRY_USER" docker compose \
+    --env-file "$GANTRY_HOME/deploy/.env" \
     -f "$GANTRY_HOME/deploy/docker-compose.prod.yml" \
     up -d --build
 
@@ -195,5 +197,8 @@ systemctl is-active nginx         && echo "  nginx         : running"
 echo ""
 echo "  https://$DOMAIN_API/health"
 echo "  https://$DOMAIN_API/docs"
+echo ""
+echo "  After Vercel deploy, run on this server:"
+echo "    bash $GANTRY_HOME/deploy/configure-ui-origin.sh https://<your-vercel-url>"
 echo ""
 log "Done. Remember to fill in $GANTRY_HOME/.env if not already done."

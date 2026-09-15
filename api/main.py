@@ -7,7 +7,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from api import db
-from api.config import GANTRY_DEV_AUTH_BYPASS
+from api.config import GANTRY_DEV_AUTH_BYPASS, cors_settings
 from api.middleware import RateLimitMiddleware
 from api.repositories import keys as keys_repo
 from api.routes import (
@@ -65,10 +65,18 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
+_cors_origins, _cors_regex = cors_settings()
+if not _cors_origins and not _cors_regex and not GANTRY_DEV_AUTH_BYPASS:
+    log.warning(
+        "cors_unconfigured",
+        hint="Set GANTRY_CORS_ORIGINS or GANTRY_WEB_URL for browser clients",
+    )
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
+    allow_origins=_cors_origins or ([] if _cors_regex else ["*"]),
+    allow_origin_regex=_cors_regex,
+    allow_credentials=bool(_cors_origins or _cors_regex),
     allow_methods=["*"],
     allow_headers=["*"],
 )
