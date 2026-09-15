@@ -85,6 +85,16 @@ async def update_workspace(
     return {"workspace": workspace}
 
 
+@router.delete("/{workspace_id}")
+async def delete_workspace(
+    workspace_id: str,
+    key: dict = Depends(require_scope("projects:write")),
+):
+    if not await projects_repo.delete_project(workspace_id, org_id=key["org_id"]):
+        raise HTTPException(status_code=404, detail="workspace not found")
+    return {"deleted": workspace_id}
+
+
 @router.get("/{workspace_id}/artifacts")
 async def list_workspace_artifacts(
     workspace_id: str,

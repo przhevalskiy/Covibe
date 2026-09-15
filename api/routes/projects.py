@@ -82,6 +82,16 @@ async def update_project(
     return {"project": project}
 
 
+@router.delete("/{project_id}")
+async def delete_project(
+    project_id: str,
+    key: dict = Depends(require_scope("projects:write")),
+):
+    if not await projects_repo.delete_project(project_id, org_id=key["org_id"]):
+        raise HTTPException(status_code=404, detail="project not found")
+    return {"deleted": project_id}
+
+
 @router.get("/{project_id}/artifacts")
 async def list_project_artifacts(
     project_id: str,

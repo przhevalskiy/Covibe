@@ -32,6 +32,7 @@ from api.services import github_tokens
 from api.services import llm_config as llm_config_service
 from api.services import goal_context
 from api.services import task_events
+from api.services import task_messages
 from fastapi.responses import StreamingResponse
 from api.services.task_results import resolve_terminal_result
 from schemas.crew import autonomy_for_tier, get_checkpoint
@@ -238,6 +239,26 @@ async def _submit_one(
     except Exception as exc:
         log.error("task_submit_failed", goal=goal, error=str(exc))
         return {"goal": goal, "error": str(exc)}
+
+
+async def _build_local_task_response(task_id: str, org_id: str, meta: dict) -> dict:
+    """Serve tasks recorded locally when Agentex has no matching run (simulated / stale)."""
+    status = meta.get("status") or "unknown"
+    result = await tasks_repo.get_task_result(task_id, org_id=org_id)
+    return {
+        "task_id": task_id,
+        "status": status,
+        "project_id": meta.get("project_id"),
+        "source": meta.get("source", "api"),
+        "tier": meta.get("tier"),
+        "autonomy_level": meta.get("autonomy_level") or autonomy_for_tier(meta.get("tier")),
+        "playbook": meta.get("playbook"),
+        "track_warnings": meta.get("track_warnings") or [],
+        "pending_hitl": meta.get("pending_hitl") or [],
+        "created_at": meta.get("created_at"),
+        "updated_at": None,
+        "result": result,
+    }
 
 
 async def _build_task_response(task_id: str, org_id: str, agentex_task: dict, messages: list[dict]) -> dict:
@@ -483,12 +504,14 @@ async def get_task(task_id: str, key: dict = Depends(require_any_scope("tasks:re
         task = await agentex_client.get_task(task_id)
     except httpx.HTTPStatusError as exc:
         if exc.response.status_code == 404:
-            raise HTTPException(status_code=404, detail="task not found")
+            return await _build_local_task_response(task_id, key["org_id"], meta)
         raise HTTPException(status_code=502, detail=str(exc))
 
     messages = []
     try:
-        messages = await agentex_client.get_messages(task_id)
+        messages = task_messages.normalize_task_messages(
+            await agentex_client.get_messages(task_id)
+        )
     except Exception:
         pass
 
@@ -505,15 +528,33 @@ async def stream_task_events(
     if not meta:
         raise HTTPException(status_code=404, detail="task not found")
 
+    async def local_only_events():
+        status = meta.get("status") or "unknown"
+        yield status_event(status)
+        for ev in meta.get("events_fired") or []:
+            yield lifecycle_event(ev)
+        if status.lower() in TERMINAL_STATUSES:
+            result = await tasks_repo.get_task_result(task_id, org_id=key["org_id"])
+            yield done_event(status=status, result=result)
+
     async def event_generator():
+        import httpx
+
         last_status: str | None = None
-        last_msg_count = 0
+        seen_message_keys: set[str] = set()
         events_fired = set(meta.get("events_fired") or [])
         hitl_sent: set[str] = set()
 
         while True:
             try:
                 task = await agentex_client.get_task(task_id)
+            except httpx.HTTPStatusError as exc:
+                if exc.response.status_code == 404:
+                    async for ev in local_only_events():
+                        yield ev
+                    break
+                yield error_event("failed to fetch task")
+                break
             except Exception:
                 yield error_event("failed to fetch task")
                 break
@@ -543,11 +584,9 @@ async def stream_task_events(
                     hitl_sent.add(key_sig)
 
             try:
-                messages = await agentex_client.get_messages(task_id)
-                if len(messages) > last_msg_count:
-                    for msg in messages[last_msg_count:]:
-                        yield message_event(msg)
-                    last_msg_count = len(messages)
+                raw_messages = await agentex_client.get_messages(task_id)
+                for msg in task_messages.new_messages_since(raw_messages, seen_message_keys):
+                    yield message_event(msg)
             except Exception:
                 pass
 
@@ -591,9 +630,9 @@ async def get_task_messages(task_id: str, key: dict = Depends(require_any_scope(
         messages = await agentex_client.get_messages(task_id)
     except httpx.HTTPStatusError as exc:
         if exc.response.status_code == 404:
-            raise HTTPException(status_code=404, detail="task not found")
+            return {"task_id": task_id, "messages": []}
         raise HTTPException(status_code=502, detail=str(exc))
-    return {"task_id": task_id, "messages": messages}
+    return {"task_id": task_id, "messages": task_messages.normalize_task_messages(messages)}
 
 
 @router.get("/{task_id}/traces")
