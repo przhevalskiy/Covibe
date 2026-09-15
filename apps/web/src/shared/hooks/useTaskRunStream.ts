@@ -8,6 +8,7 @@ import {
   applyRunStreamEvent,
   isTerminalStatus,
 } from '@/shared/gantry/runStreamMessages';
+import { mergeTaskMessages, normalizeTaskMessage, sortTaskMessages } from '@/shared/gantry/taskMessages';
 
 const STREAM_RECONNECT_MS = 3000;
 const FALLBACK_POLL_MS = 10000;
@@ -37,7 +38,10 @@ export function useTaskRunStream(taskId: string | undefined) {
     }
 
     const msgResp = await gantryClient.getTaskMessages(taskId);
-    setMessages(msgResp.messages as TaskMessage[]);
+    const normalized = sortTaskMessages(
+      (msgResp.messages as TaskMessage[]).map((message) => normalizeTaskMessage(message)),
+    );
+    setMessages(normalized);
     setError(null);
     return row;
   }, [taskId]);
@@ -95,7 +99,9 @@ export function useTaskRunStream(taskId: string | undefined) {
           if (cancelled) return false;
 
           applyRunStreamEvent(event, {
-            onChunk: (msg) => setMessages((prev) => [...prev, msg]),
+            onTaskMessage: (message) => {
+              setMessages((prev) => mergeTaskMessages(prev, [message]));
+            },
             onChecklist: () => void refreshTaskMeta(),
             onStatus: (status) =>
               setTask((prev) => (prev ? { ...prev, status } : prev)),

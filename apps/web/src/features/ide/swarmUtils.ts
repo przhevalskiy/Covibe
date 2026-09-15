@@ -1,6 +1,8 @@
 export type AgentFileEntry = { role: string; builderIdx: number };
 
 export type TaskMessage = {
+  id?: string;
+  created_at?: string;
   content?: unknown;
 };
 
@@ -152,6 +154,7 @@ export type HitlPrompt = {
   checkpoint: string;
   workflow_id: string;
   description?: string;
+  questions?: string[];
 };
 
 export function extractHitlFromMessages(messages: TaskMessage[]): HitlPrompt[] {

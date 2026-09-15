@@ -24,12 +24,11 @@ function mapEvent(raw: GantryEvent): SSEEvent | null {
         provider: 'gantry',
       } as SSEEvent;
     case 'message': {
-      const msg = raw.message as { content?: string } | undefined;
-      const text =
-        typeof msg?.content === 'string'
-          ? msg.content
-          : JSON.stringify(msg ?? {});
-      return { type: 'chunk', content: `${text}\n`, provider: 'gantry' } as SSEEvent;
+      const msg = raw.message;
+      if (msg && typeof msg === 'object') {
+        return { type: 'task_message', message: msg as Record<string, unknown>, provider: 'gantry' } as SSEEvent;
+      }
+      return null;
     }
     case 'hitl':
       return {

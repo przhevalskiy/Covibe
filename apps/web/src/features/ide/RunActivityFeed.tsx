@@ -1,15 +1,17 @@
-import { Check, X } from 'lucide-react';
 import { useMemo } from 'react';
-import { gantryClient } from '@/shared/services/gantry/client';
+import { MessageFeed } from './feed/MessageFeed';
 import { RunFollowUpComposer } from './RunFollowUpComposer';
 import type { HitlPrompt, TaskMessage } from './swarmUtils';
-import { getTextContent } from './swarmUtils';
+import { mergeTaskMessages } from '@/shared/gantry/taskMessages';
 import './RunActivityFeed.css';
 
-type PendingHitl = {
+const TERMINAL = new Set(['completed', 'failed', 'cancelled', 'terminated', 'timeout', 'canceled', 'canceled']);
+
+type PendingHitlItem = {
   checkpoint: string;
   workflow_id: string;
   description?: string;
+  questions?: string[];
 };
 
 export function RunActivityFeed({
@@ -19,7 +21,6 @@ export function RunActivityFeed({
   effectivelyDone = false,
   pendingHitl = [],
   messageHitl = [],
-  onHitlResolved,
   onFollowUpSent,
   onTerminated,
 }: {
@@ -27,59 +28,57 @@ export function RunActivityFeed({
   messages: TaskMessage[];
   status?: string;
   effectivelyDone?: boolean;
-  pendingHitl?: PendingHitl[];
+  pendingHitl?: PendingHitlItem[];
   messageHitl?: HitlPrompt[];
   onHitlResolved?: () => void;
   onFollowUpSent?: () => void;
   onTerminated?: () => void;
 }) {
-  const hitlItems = useMemo(() => {
-    const seen = new Set<string>();
-    const items: PendingHitl[] = [];
-    for (const p of [...pendingHitl, ...messageHitl]) {
-      if (seen.has(p.workflow_id)) continue;
-      seen.add(p.workflow_id);
-      items.push(p);
-    }
-    return items;
-  }, [pendingHitl, messageHitl]);
+  const isRunning = useMemo(() => !TERMINAL.has(status.toLowerCase()), [status]);
 
-  const handleHitl = async (item: PendingHitl, approved: boolean) => {
-    await gantryClient.hitl(taskId, {
-      checkpoint: item.checkpoint,
-      workflow_id: item.workflow_id,
-      approved,
-    });
-    onHitlResolved?.();
-  };
+  // Merge API pending HITL into stream as synthetic messages when not already present.
+  const feedMessages = useMemo(() => {
+    const synthetics: TaskMessage[] = [];
+    const seen = new Set<string>();
+    for (const msg of messages) {
+      const c = msg.content as { content?: string } | undefined;
+      const text = typeof c?.content === 'string' ? c.content : '';
+      if (text.includes('__clarification_request__') || text.includes('__approval_request__')) {
+        const m = text.match(/"workflow_id"\s*:\s*"([^"]+)"/);
+        if (m?.[1]) seen.add(m[1]);
+      }
+    }
+    for (const item of [...pendingHitl, ...messageHitl]) {
+      if (seen.has(item.workflow_id)) continue;
+      seen.add(item.workflow_id);
+      if (item.checkpoint === 'pm_clarification' || item.checkpoint.includes('clarification')) {
+        synthetics.push({
+          created_at: new Date().toISOString(),
+          content: {
+            type: 'text',
+            content: `__clarification_request__${JSON.stringify({
+              questions: item.questions?.length
+                ? item.questions
+                : [item.description ?? 'Please clarify the project scope.'],
+              context: item.description,
+              workflow_id: item.workflow_id,
+            })}`,
+          },
+        });
+      }
+    }
+    return mergeTaskMessages(messages, synthetics);
+  }, [messages, pendingHitl, messageHitl]);
 
   return (
     <div className="run-activity-feed">
-      {hitlItems.map(item => (
-        <div key={item.workflow_id} className="run-hitl-card">
-          <strong>Approval required</strong>
-          <p>{item.description ?? item.checkpoint}</p>
-          <div className="run-hitl-actions">
-            <button type="button" onClick={() => void handleHitl(item, true)}>
-              <Check size={14} /> Approve
-            </button>
-            <button type="button" className="reject" onClick={() => void handleHitl(item, false)}>
-              <X size={14} /> Reject
-            </button>
-          </div>
-        </div>
-      ))}
-
       <div className="run-activity-log">
-        {messages.map((msg, i) => {
-          const text = getTextContent(msg);
-          if (!text || text.startsWith('__')) return null;
-          return (
-            <div key={i} className="run-activity-line">
-              {text}
-            </div>
-          );
-        })}
+        <MessageFeed
+          messages={feedMessages}
+          isRunning={isRunning}
+          taskId={taskId}
+          taskStatus={status.toUpperCase()}
+        />
       </div>
 
       <RunFollowUpComposer

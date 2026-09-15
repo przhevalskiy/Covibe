@@ -1,4 +1,9 @@
 export { IdeFileExplorer } from './IdeFileExplorer';
+export { IdeExplorerProvider } from './IdeExplorerProvider';
+export { useIdeExplorer } from './ideExplorerState';
+export type { IdeExplorerState, IdeTab } from './ideExplorerState';
+export { IdeFileTree, IdeEditorPane } from './IdeFileTree';
+export { AgentRail } from './AgentRail';
 export { CodeViewer } from './CodeViewer';
 export { CodeEditor } from './CodeEditor';
 export { PreviewPane } from './PreviewPane';

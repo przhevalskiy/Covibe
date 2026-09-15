@@ -1,12 +1,12 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { Link, useParams } from 'react-router-dom';
+import { Link, useNavigate, useParams } from 'react-router-dom';
 import { ArrowLeft, ExternalLink, Loader2 } from 'lucide-react';
 import {
-  CrewPanel,
-  IdeFileExplorer,
+  AgentRail,
+  IdeEditorPane,
+  IdeExplorerProvider,
+  IdeFileTree,
   PreviewPane,
-  RunActivityFeed,
-  TracesPanel,
   extractAgentOnFiles,
   extractDevUrl,
   extractGoalFromMessages,
@@ -15,6 +15,7 @@ import {
   parsePipelineMeta,
   parsePipelineStages,
 } from '@/features/ide';
+import { useChatStore } from '@/features/chat';
 import { playbookLabel, runSizeLabel } from '@/shared/constants/runConfig';
 import { resolveTaskBranch, resolveTaskPrUrl } from '@/shared/gantry/taskResult';
 import { isTerminalStatus } from '@/shared/gantry/runStreamMessages';
@@ -24,40 +25,63 @@ import { gantryClient } from '@/shared/services/gantry/client';
 import { toUiWorkspace } from '@/shared/services/gantry/projectMapper';
 import type { Workspace } from '@/shared/types';
 import { RunComposePanel } from './RunComposePanel';
+import { useRunLaunchStore } from './runLaunchStore';
 import './RunDetailPage.css';
 
-const LEFT_TAB_KEY = 'gantry_run_left_tab';
-const RIGHT_TAB_KEY = 'gantry_run_right_tab';
+const CENTER_TAB_KEY = 'gantry_run_center_tab';
+const RAIL_DRAWER_KEY = 'gantry_agent_rail_drawer';
 
-type LeftTab = 'explorer' | 'preview';
-type RightTab = 'compose' | 'activity' | 'crew' | 'traces';
+type CenterTab = 'files' | 'preview';
+
+const PRE_TASK_STATUSES = new Set(['queued', 'pending', 'unknown', 'compose']);
 
 export function RunIdePage() {
+  const navigate = useNavigate();
   const { taskId: routeTaskId } = useParams<{ taskId: string }>();
-  const isCompose = !routeTaskId || routeTaskId === 'new';
-  const taskId = isCompose ? undefined : routeTaskId;
+  const isComposeRoute = !routeTaskId || routeTaskId === 'new';
+  const pendingTaskId = useRunLaunchStore((s) => s.pendingTaskId);
+  const ideRevealed = useRunLaunchStore((s) => s.ideRevealed);
+  const revealIde = useRunLaunchStore((s) => s.revealIde);
+  const resetLaunch = useRunLaunchStore((s) => s.reset);
+  const isSubmitted = useChatStore((s) => s.isSubmitted);
+
+  const streamTaskId = isComposeRoute ? pendingTaskId ?? undefined : routeTaskId;
+  const showComposeOnly = isComposeRoute && !ideRevealed;
 
   const activeWorkspaceId = useWorkspaceStore((s) => s.activeWorkspaceId);
   const [composeProject, setComposeProject] = useState<Workspace | null>(null);
 
   const { task, project: runProject, messages, error, streamLive, refresh } =
-    useTaskRunStream(taskId);
+    useTaskRunStream(streamTaskId);
 
-  const project = isCompose ? composeProject : runProject;
+  const project = isComposeRoute ? composeProject : runProject;
+  const taskId = streamTaskId;
 
-  const [leftTab, setLeftTab] = useState<LeftTab>(() => {
-    const saved = localStorage.getItem(LEFT_TAB_KEY);
-    return saved === 'preview' ? 'preview' : 'explorer';
+  const [centerTab, setCenterTab] = useState<CenterTab>(() => {
+    const saved = localStorage.getItem(CENTER_TAB_KEY);
+    return saved === 'preview' ? 'preview' : 'files';
   });
-  const [rightTab, setRightTab] = useState<RightTab>(() =>
-    isCompose ? 'compose' : 'activity',
+  const [drawerMode, setDrawerMode] = useState(() =>
+    localStorage.getItem(RAIL_DRAWER_KEY) === 'true',
   );
   const [manualPreviewUrl, setManualPreviewUrl] = useState('');
   const previewAutoSwitchedRef = useRef(false);
 
   useEffect(() => {
-    if (!isCompose || !activeWorkspaceId) {
-      setComposeProject(null);
+    if (!isComposeRoute && routeTaskId) {
+      resetLaunch();
+    }
+  }, [isComposeRoute, routeTaskId, resetLaunch]);
+
+  useEffect(() => {
+    if (isComposeRoute && !pendingTaskId) {
+      resetLaunch();
+    }
+  }, [isComposeRoute, pendingTaskId, resetLaunch]);
+
+  useEffect(() => {
+    if (!isComposeRoute || !activeWorkspaceId) {
+      if (isComposeRoute) setComposeProject(null);
       return;
     }
     let cancelled = false;
@@ -72,28 +96,45 @@ export function RunIdePage() {
     return () => {
       cancelled = true;
     };
-  }, [isCompose, activeWorkspaceId]);
+  }, [isComposeRoute, activeWorkspaceId]);
 
   useEffect(() => {
-    if (isCompose) {
-      setRightTab('compose');
-    } else {
-      setRightTab('activity');
-      previewAutoSwitchedRef.current = false;
-    }
-  }, [isCompose, taskId]);
+    if (showComposeOnly) return;
+    previewAutoSwitchedRef.current = false;
+  }, [showComposeOnly, taskId]);
 
-  const selectLeftTab = (tab: LeftTab) => {
-    setLeftTab(tab);
-    localStorage.setItem(LEFT_TAB_KEY, tab);
+  useEffect(() => {
+    if (!isComposeRoute || ideRevealed || !pendingTaskId || !isSubmitted) return;
+
+    const status = task?.status?.toLowerCase() ?? '';
+    const tasked =
+      messages.length > 0 ||
+      (status.length > 0 && !PRE_TASK_STATUSES.has(status));
+
+    if (!tasked) return;
+
+    revealIde();
+    const timer = window.setTimeout(() => {
+      navigate(`/runs/${pendingTaskId}`, { replace: true });
+    }, 520);
+    return () => window.clearTimeout(timer);
+  }, [
+    isComposeRoute,
+    ideRevealed,
+    pendingTaskId,
+    isSubmitted,
+    messages.length,
+    task?.status,
+    revealIde,
+    navigate,
+  ]);
+
+  const selectCenterTab = (tab: CenterTab) => {
+    setCenterTab(tab);
+    localStorage.setItem(CENTER_TAB_KEY, tab);
   };
 
-  const selectRightTab = (tab: RightTab) => {
-    setRightTab(tab);
-    localStorage.setItem(RIGHT_TAB_KEY, tab);
-  };
-
-  const status = task?.status ?? (isCompose ? 'compose' : 'running');
+  const status = task?.status ?? (showComposeOnly ? 'compose' : 'running');
   const isRunning = task ? !isTerminalStatus(task.status) : false;
   const buildBranch = resolveTaskBranch(task);
   const repoRoot = project?.repo_path ?? '';
@@ -111,8 +152,8 @@ export function RunIdePage() {
   );
   const pipelineMeta = useMemo(() => parsePipelineMeta(messages), [messages]);
   const goal = useMemo(
-    () => (isCompose ? null : extractGoalFromMessages(messages)),
-    [isCompose, messages],
+    () => (showComposeOnly ? null : extractGoalFromMessages(messages)),
+    [showComposeOnly, messages],
   );
   const messageHitl = useMemo(() => extractHitlFromMessages(messages), [messages]);
   const prUrl = resolveTaskPrUrl(task);
@@ -122,33 +163,104 @@ export function RunIdePage() {
   const effectivelyDone = task ? !isRunning || !!pipelineMeta.finalReport : false;
 
   useEffect(() => {
-    if (isCompose || !detectedPreviewUrl || previewAutoSwitchedRef.current) return;
+    if (showComposeOnly || !detectedPreviewUrl || previewAutoSwitchedRef.current) return;
     previewAutoSwitchedRef.current = true;
-    selectLeftTab('preview');
-  }, [isCompose, detectedPreviewUrl]);
+    selectCenterTab('preview');
+  }, [showComposeOnly, detectedPreviewUrl]);
 
-  const headerTitle = isCompose
+  const headerTitle = showComposeOnly
     ? 'New run'
     : goal || 'Factory run';
 
+  const workspaceBody = project ? (
+    <IdeExplorerProvider
+      project={project}
+      isRunning={isRunning}
+      taskStatus={task?.status ?? 'running'}
+      buildBranch={buildBranch}
+      writtenPaths={writtenPaths}
+      agentOnFile={agentOnFile}
+      editable={false}
+    >
+      <div className={`run-ide-workspace ${drawerMode ? 'run-ide-workspace--drawer' : ''} ${ideRevealed ? 'run-ide-workspace--enter' : ''}`}>
+        <section className="run-ide-files">
+          <IdeFileTree showToolbar />
+        </section>
+
+        <section className="run-ide-center">
+          <div className="run-ide-center-tabs">
+            <button
+              type="button"
+              className={centerTab === 'files' ? 'active' : ''}
+              onClick={() => selectCenterTab('files')}
+            >
+              Editor
+            </button>
+            <button
+              type="button"
+              className={centerTab === 'preview' ? 'active' : ''}
+              onClick={() => selectCenterTab('preview')}
+              disabled={!project}
+            >
+              Preview
+              {activePreviewUrl && <span className="run-ide-tab-dot" />}
+            </button>
+          </div>
+          <div className="run-ide-center-panel">
+            {centerTab === 'files' ? (
+              <IdeEditorPane />
+            ) : (
+              <PreviewPane
+                url={detectedPreviewUrl ?? ''}
+                manualUrl={manualPreviewUrl}
+                onUrlChange={setManualPreviewUrl}
+              />
+            )}
+          </div>
+        </section>
+
+        {taskId && (
+          <AgentRail
+            taskId={taskId}
+            messages={messages}
+            status={status}
+            effectivelyDone={effectivelyDone}
+            pendingHitl={task?.pending_hitl ?? []}
+            messageHitl={messageHitl}
+            onFollowUpSent={() => void refresh()}
+            onTerminated={() => void refresh()}
+            onDrawerModeChange={setDrawerMode}
+            stages={stages}
+            pipelineMeta={pipelineMeta}
+            prUrl={prUrl}
+            tierLabel={tierLabel}
+          />
+        )}
+      </div>
+    </IdeExplorerProvider>
+  ) : (
+    <div className="run-ide-placeholder">
+      <div className="run-ide-loading">
+        {task ? 'Loading workspace…' : <Loader2 size={20} className="spinning" />}
+      </div>
+    </div>
+  );
+
   return (
-    <div className="run-ide">
-      <header className="run-ide-header">
-        <Link to="/runs" className="run-ide-back">
-          <ArrowLeft size={16} /> Runs
-        </Link>
-        <div className="run-ide-title-wrap">
-          <h1>{headerTitle}</h1>
-          {taskId && <code>{taskId.slice(0, 8)}</code>}
-          {isCompose && project && (
-            <span className="run-chip">{project.name}</span>
-          )}
-        </div>
-        <div className="run-ide-header-meta">
-          {!isCompose && (isRunning || streamLive) && (
-            <Loader2 size={14} className="spinning" />
-          )}
-          {!isCompose && (
+    <div className={`run-ide ${showComposeOnly ? 'run-ide--compose-first' : ''} ${ideRevealed ? 'run-ide--revealed' : ''}`}>
+      {!showComposeOnly && (
+        <header className="run-ide-header">
+          <Link to="/runs" className="run-ide-back">
+            <ArrowLeft size={16} /> Runs
+          </Link>
+          <div className="run-ide-title-wrap">
+            <h1>{headerTitle}</h1>
+            {taskId && <code>{taskId.slice(0, 8)}</code>}
+          </div>
+          <div className="run-ide-header-meta">
+            {(isRunning || streamLive) && (
+              <Loader2 size={14} className="spinning" />
+            )}
             <>
               <span className={`run-status run-status-${status.toLowerCase()}`}>{status}</span>
               {streamLive && <span className="run-chip">Live</span>}
@@ -164,128 +276,17 @@ export function RunIdePage() {
                 </a>
               )}
             </>
-          )}
-        </div>
-      </header>
-
-      {error && <p className="run-detail-error">{error}</p>}
-
-      <div className="run-ide-split">
-        <section className="run-ide-left">
-          <div className="run-ide-left-tabs">
-            <button
-              type="button"
-              className={leftTab === 'explorer' ? 'active' : ''}
-              onClick={() => selectLeftTab('explorer')}
-            >
-              Explorer
-            </button>
-            <button
-              type="button"
-              className={leftTab === 'preview' ? 'active' : ''}
-              onClick={() => selectLeftTab('preview')}
-              disabled={isCompose && !project}
-            >
-              Preview
-              {activePreviewUrl && <span className="run-ide-tab-dot" />}
-            </button>
           </div>
+        </header>
+      )}
 
-          <div className="run-ide-left-panel">
-            {leftTab === 'explorer' ? (
-              project ? (
-                <IdeFileExplorer
-                  project={project}
-                  isRunning={isRunning}
-                  taskStatus={task?.status ?? 'compose'}
-                  buildBranch={buildBranch}
-                  writtenPaths={writtenPaths}
-                  agentOnFile={agentOnFile}
-                  editable={false}
-                  layout="split"
-                />
-              ) : (
-                <div className="run-ide-placeholder">
-                  {isCompose ? (
-                    <>
-                      <p>Workspace files appear here once you have an active workspace.</p>
-                      <p className="run-ide-placeholder-hint">
-                        A workspace is created automatically when you start your first run.
-                      </p>
-                    </>
-                  ) : (
-                    <div className="run-ide-loading">
-                      {task ? 'Loading workspace…' : <Loader2 size={20} className="spinning" />}
-                    </div>
-                  )}
-                </div>
-              )
-            ) : (
-              <PreviewPane
-                url={detectedPreviewUrl ?? ''}
-                manualUrl={manualPreviewUrl}
-                onUrlChange={setManualPreviewUrl}
-              />
-            )}
-          </div>
-        </section>
+      {error && !showComposeOnly && <p className="run-detail-error">{error}</p>}
 
-        <section className="run-ide-right">
-          <div className="run-ide-right-tabs">
-            {isCompose ? (
-              <button type="button" className="active">
-                Compose
-              </button>
-            ) : (
-              ([
-                ['activity', 'Activity'],
-                ['crew', 'Crew'],
-                ['traces', 'Traces'],
-              ] as const).map(([tab, label]) => (
-                <button
-                  key={tab}
-                  type="button"
-                  className={rightTab === tab ? 'active' : ''}
-                  onClick={() => selectRightTab(tab)}
-                >
-                  {label}
-                </button>
-              ))
-            )}
-          </div>
-
-          <div className="run-ide-right-panel">
-            {isCompose ? (
-              <RunComposePanel workspace={project} />
-            ) : (
-              <>
-                {rightTab === 'activity' && taskId && (
-                  <RunActivityFeed
-                    messages={messages}
-                    pendingHitl={task?.pending_hitl ?? []}
-                    messageHitl={messageHitl}
-                    onHitlResolved={() => void refresh()}
-                    onFollowUpSent={() => void refresh()}
-                    onTerminated={() => void refresh()}
-                    taskId={taskId}
-                    status={status}
-                    effectivelyDone={effectivelyDone}
-                  />
-                )}
-                {rightTab === 'crew' && (
-                  <CrewPanel
-                    stages={stages}
-                    pipelineMeta={pipelineMeta}
-                    prUrl={prUrl}
-                    tierLabel={tierLabel}
-                  />
-                )}
-                {rightTab === 'traces' && taskId && <TracesPanel taskId={taskId} />}
-              </>
-            )}
-          </div>
-        </section>
-      </div>
+      {showComposeOnly ? (
+        <RunComposePanel workspace={project} layout="centered" />
+      ) : (
+        workspaceBody
+      )}
     </div>
   );
 }

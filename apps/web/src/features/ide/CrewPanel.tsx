@@ -9,14 +9,15 @@ type Props = {
   pipelineMeta: PipelineMeta;
   prUrl?: string | null;
   tierLabel?: string | null;
+  compact?: boolean;
 };
 
-export function CrewPanel({ stages, pipelineMeta, prUrl, tierLabel }: Props) {
+export function CrewPanel({ stages, pipelineMeta, prUrl, tierLabel, compact = false }: Props) {
   const { tierMeta, isReplanning, finalReport, coveragePct } = pipelineMeta;
   const deployed = stages.filter(s => s.state !== 'pending').length;
 
   return (
-    <div className="crew-panel">
+    <div className={`crew-panel ${compact ? 'crew-panel--compact' : ''}`}>
       {(tierMeta || tierLabel) && (
         <div className="crew-tier-card">
           <strong>
@@ -42,9 +43,11 @@ export function CrewPanel({ stages, pipelineMeta, prUrl, tierLabel }: Props) {
         </div>
       )}
 
-      <p className="crew-deployed">
-        {deployed} of {stages.length} agents deployed
-      </p>
+      {!compact && (
+        <p className="crew-deployed">
+          {deployed} of {stages.length} agents deployed
+        </p>
+      )}
 
       <PipelineTracker stages={stages} layout="vertical" />
 

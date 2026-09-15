@@ -1,5 +1,4 @@
 import { useCallback, useRef } from 'react';
-import { useNavigate } from 'react-router-dom';
 import { sseClient } from '@/shared/services/sse';
 import { useChatStore } from '@/features/chat';
 import { useDiscussionStore } from '@/features/discussions';
@@ -7,9 +6,9 @@ import { approveFactoryHitl } from '@/shared/services/gantry/hitl';
 import { taskIdFromSubmittedEvent } from '@/shared/gantry/submittedEvent';
 import { persistDiscussionMessage } from '@/shared/gantry/discussionPersist';
 import { useWorkspaceStore } from '@/features/workspace';
+import { useRunLaunchStore } from '@/features/runs/runLaunchStore';
 
 export function useSSE() {
-  const navigate = useNavigate();
   const messageIdRef = useRef<string>('');
 
   const {
@@ -74,11 +73,11 @@ export function useSSE() {
             const taskId = taskIdFromSubmittedEvent(event);
             setSubmitted(true);
             setActiveTaskId(taskId);
+            useRunLaunchStore.getState().setPendingTask(taskId);
             linkTaskToDiscussion(targetDiscussionId, taskId);
             useWorkspaceStore.getState().hydrate();
             finalizeStream(messageIdRef.current, targetDiscussionId);
             sseClient.cancel();
-            navigate(`/runs/${taskId}`);
             return;
           } else if (event.type === 'done') {
             finalizeStream(messageIdRef.current, targetDiscussionId);
@@ -91,7 +90,6 @@ export function useSSE() {
       }
     },
     [
-      navigate,
       activeDiscussionId,
       addMessage,
       startStream,

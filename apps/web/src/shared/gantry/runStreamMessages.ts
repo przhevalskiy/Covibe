@@ -1,5 +1,6 @@
 import type { SSEEvent } from '@/shared/types';
 import type { TaskMessage } from '@/features/ide/swarmUtils';
+import { normalizeTaskMessage } from './taskMessages';
 
 export function chunkToTaskMessage(text: string): TaskMessage {
   return { content: { type: 'text', content: text } };
@@ -24,7 +25,7 @@ export function isTerminalStatus(status: string): boolean {
 }
 
 export type RunStreamHandlers = {
-  onChunk: (message: TaskMessage) => void;
+  onTaskMessage: (message: TaskMessage) => void;
   onChecklist: () => void;
   onStatus: (status: string) => void;
   onDone: () => void;
@@ -34,11 +35,13 @@ export type RunStreamHandlers = {
 export function applyRunStreamEvent(event: SSEEvent, handlers: RunStreamHandlers): void {
   switch (event.type) {
     case 'chunk': {
-      handlers.onChunk(chunkToTaskMessage(event.content));
       const status = parseStatusFromChunk(event.content);
       if (status) handlers.onStatus(status);
       break;
     }
+    case 'task_message':
+      handlers.onTaskMessage(normalizeTaskMessage(event.message));
+      break;
     case 'checklist':
       handlers.onChecklist();
       break;

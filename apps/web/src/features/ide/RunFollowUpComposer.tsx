@@ -1,6 +1,7 @@
 import { ArrowUp, Loader2, Square } from 'lucide-react';
 import { useState } from 'react';
 import { gantryClient } from '@/shared/services/gantry/client';
+import { PromptCard } from '@/components/input/PromptCard';
 import './RunFollowUpComposer.css';
 
 const TERMINAL = new Set(['completed', 'failed', 'cancelled', 'terminated', 'timeout', 'canceled']);
@@ -67,52 +68,62 @@ export function RunFollowUpComposer({
 
   return (
     <div className="run-followup">
-      <div className={`run-followup-box${prompt.trim() ? ' active' : ''}`}>
-        {error && <p className="run-followup-feedback error">{error}</p>}
-        {sent && <p className="run-followup-feedback success">Sent</p>}
-
-        <div className="run-followup-row">
-          <textarea
-            value={prompt}
-            onChange={e => setPrompt(e.target.value)}
-            onKeyDown={e => {
-              if (e.key === 'Enter' && !e.shiftKey) {
-                e.preventDefault();
-                void submit();
-              }
-            }}
-            placeholder={
-              effectivelyDone
-                ? 'Send a follow-up to the foreman…'
-                : 'Foreman is building — queue a follow-up…'
+      <PromptCard
+        compact
+        active={!!prompt.trim()}
+        feedback={
+          error || sent ? (
+            <>
+              {error && <p className="prompt-card-feedback prompt-card-feedback--error">{error}</p>}
+              {sent && <p className="prompt-card-feedback prompt-card-feedback--success">Sent</p>}
+            </>
+          ) : undefined
+        }
+        toolbar={
+          <div className="prompt-card-toolbar-right" style={{ marginLeft: 'auto' }}>
+            {showStop ? (
+              <button
+                type="button"
+                className="prompt-card-action prompt-card-action--stop"
+                title="Stop task"
+                disabled={stopping}
+                onClick={() => void stop()}
+              >
+                {stopping ? <Loader2 size={14} className="spinning" /> : <Square size={12} fill="currentColor" />}
+              </button>
+            ) : (
+              <button
+                type="button"
+                className="prompt-card-action prompt-card-action--send"
+                title="Send (Enter)"
+                disabled={!prompt.trim() || sending}
+                onClick={() => void submit()}
+              >
+                {sending ? <Loader2 size={14} className="spinning" /> : <ArrowUp size={14} />}
+              </button>
+            )}
+          </div>
+        }
+      >
+        <textarea
+          value={prompt}
+          onChange={e => setPrompt(e.target.value)}
+          onKeyDown={e => {
+            if (e.key === 'Enter' && !e.shiftKey) {
+              e.preventDefault();
+              void submit();
             }
-            rows={1}
-            disabled={sending}
-          />
-
-          {showStop ? (
-            <button
-              type="button"
-              className="run-followup-action stop"
-              title="Stop task"
-              disabled={stopping}
-              onClick={() => void stop()}
-            >
-              {stopping ? <Loader2 size={14} className="spinning" /> : <Square size={12} fill="currentColor" />}
-            </button>
-          ) : (
-            <button
-              type="button"
-              className="run-followup-action send"
-              title="Send (Enter)"
-              disabled={!prompt.trim() || sending}
-              onClick={() => void submit()}
-            >
-              {sending ? <Loader2 size={14} className="spinning" /> : <ArrowUp size={14} />}
-            </button>
-          )}
-        </div>
-      </div>
+          }}
+          placeholder={
+            effectivelyDone
+              ? 'Send a follow-up to the foreman…'
+              : 'Foreman is building — queue a follow-up…'
+          }
+          rows={1}
+          disabled={sending}
+          className="prompt-card-textarea"
+        />
+      </PromptCard>
     </div>
   );
 }

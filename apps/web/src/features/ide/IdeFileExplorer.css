@@ -32,6 +32,60 @@
   color: var(--gray-600);
 }
 
+.ide-explorer-toolbar--compact {
+  padding: 8px 10px;
+}
+
+.ide-file-tree {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  height: 100%;
+}
+
+.ide-file-tree-scroll {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  background: color-mix(in srgb, var(--accent-500) 3%, var(--panel-bg));
+}
+
+.ide-tree-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.ide-tree-row.agent-active {
+  box-shadow: inset 3px 0 0 var(--agent-accent, var(--accent-500));
+}
+
+.ide-agent-badge {
+  margin-left: auto;
+  flex-shrink: 0;
+  font-size: 8px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  padding: 1px 5px;
+  border-radius: 999px;
+  color: var(--agent-accent, var(--accent-700));
+  background: color-mix(in srgb, var(--agent-accent, var(--accent-500)) 16%, transparent);
+  border: 1px solid color-mix(in srgb, var(--agent-accent, var(--accent-500)) 28%, transparent);
+  animation: ide-agent-pulse 1.4s ease-in-out infinite;
+}
+
+@keyframes ide-agent-pulse {
+  0%, 100% { opacity: 0.75; }
+  50% { opacity: 1; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ide-agent-badge {
+    animation: none;
+  }
+}
+
 .ide-explorer-body {
   flex: 1;
   min-height: 0;
@@ -78,8 +132,8 @@
 }
 
 .ide-tree-row.file.active {
-  background: var(--brand-50);
-  color: var(--brand-800);
+  background: color-mix(in srgb, var(--accent-500) 14%, transparent);
+  color: var(--accent-700);
 }
 
 .ide-tree-row.recent {

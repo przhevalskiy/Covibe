@@ -215,6 +215,12 @@ export interface SSEChecklistEvent {
   intent: string;
 }
 
+export interface SSETaskMessageEvent {
+  type: 'task_message';
+  message: Record<string, unknown>;
+  provider: string;
+}
+
 export interface SSESubmittedEvent {
   type: 'submitted';
   /** Canonical Gantry task id after POST /v1/tasks. */
@@ -226,6 +232,7 @@ export interface SSESubmittedEvent {
 
 export type SSEEvent =
   | SSEChunkEvent
+  | SSETaskMessageEvent
   | SSEDiscussionTitleEvent
   | SSEIntentEvent
   | SSEChecklistEvent
