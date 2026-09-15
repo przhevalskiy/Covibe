@@ -88,7 +88,7 @@ class SwarmOrchestrator(BaseWorkflow):
                 retry_policy=RetryPolicy(maximum_attempts=2),
             )
 
-        task_queue = environment_variables.WORKFLOW_TASK_QUEUE or "web_scout_queue"
+        task_queue = environment_variables.WORKFLOW_TASK_QUEUE or "gantry_queue"
         repo_path = params.params.get("repo_path", ".") if params.params else "."
         branch_prefix = params.params.get("branch_prefix", "swarm") if params.params else "swarm"
         playbook = (params.params or {}).get("playbook") or None

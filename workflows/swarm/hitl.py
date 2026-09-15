@@ -12,14 +12,22 @@ def approval_workflow_id(task_id: str, iteration: int, checkpoint: str) -> str:
     return f"{task_id}-r{iteration}-approval-{checkpoint}"
 
 
-def build_hitl_meta_patch(checkpoint: str, action: str, workflow_id: str) -> dict:
-    return {
-        "pending_hitl_add": {
-            "checkpoint": checkpoint,
-            "workflow_id": workflow_id,
-            "action": action,
-        },
+def build_hitl_meta_patch(
+    checkpoint: str,
+    action: str,
+    workflow_id: str,
+    *,
+    questions: list[str] | None = None,
+) -> dict:
+    entry: dict = {
+        "checkpoint": checkpoint,
+        "workflow_id": workflow_id,
+        "action": action,
     }
+    if questions:
+        entry["questions"] = questions
+        entry["description"] = action
+    return {"pending_hitl_add": entry}
 
 
 def build_approval_request_content(checkpoint: str, action: str, workflow_id: str) -> str:

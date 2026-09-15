@@ -20,6 +20,7 @@ from agentex.types.text_content import TextContent
 with workflow.unsafe.imports_passed_through():
     from project.tools.pm import PM_VALID_TOOL_NAMES
     from workflows.child_workflow import ClarificationWorkflow
+    from workflows.swarm.hitl import build_hitl_meta_patch
     from project.config import CLAUDE_SONNET_MODEL as _CLAUDE_SONNET_MODEL
 
 logger = structlog.get_logger(__name__)
@@ -32,6 +33,10 @@ PLANNER_OPTIONS = {
 }
 IO_OPTIONS = {
     "start_to_close_timeout": timedelta(seconds=30),
+    "retry_policy": RetryPolicy(maximum_attempts=2),
+}
+META_OPTIONS = {
+    "start_to_close_timeout": timedelta(seconds=15),
     "retry_policy": RetryPolicy(maximum_attempts=2),
 }
 
@@ -70,22 +75,18 @@ class PMAgent:
             f"Repository root: {repo_path}\n\n"
             f"Your job:\n"
             f"1. Call list_directory(path='{repo_path}') to check if the repo has any files.\n"
-            f"2. If the directory is EMPTY (no files), you MUST call ask_clarification immediately.\n"
-            f"   An empty repo = greenfield build = tech stack is unknown = clarification required.\n"
-            f"   Ask these questions:\n"
-            f"   - 'What framework/language? (e.g. React + TypeScript, Vue, Python/FastAPI, React Native, Flutter)'\n"
-            f"   - 'Web app, mobile app, CLI tool, or API?'\n"
-            f"   - 'Any specific libraries or constraints?'\n"
-            f"   DO NOT skip this step for an empty repo. DO NOT call report_pm before asking.\n"
+            f"2. If the directory is EMPTY, infer a sensible stack from the goal "
+            f"(e.g. landing page → React + TypeScript web app) and call report_pm with an enriched goal.\n"
+            f"   Only call ask_clarification when the goal is genuinely ambiguous — missing platform, "
+            f"conflicting requirements, or stack cannot be inferred.\n"
             f"3. If the repo has existing code, read key files and only ask if there are genuine "
             f"   ambiguities that would cause the build to fail.\n"
-            f"4. After receiving answers (or if repo has code), call report_pm with the enriched goal "
+            f"4. After receiving answers (or when the goal is clear), call report_pm with the enriched goal "
             f"   that includes the tech stack and platform.\n"
             f"5. Use memory_write(repo_path='{repo_path}', key='pm.tech_stack', value=<stack>) to store "
             f"   the tech stack for the Architect.\n\n"
-            f"IMPORTANT: For an empty repo, the sequence MUST be:\n"
-            f"list_directory → ask_clarification → report_pm\n"
-            f"NOT: list_directory → report_pm"
+            f"IMPORTANT: Do not block the run on optional questions. Prefer report_pm over ask_clarification "
+            f"when the goal already specifies what to build."
         )
 
         context: list[dict] = []
@@ -159,6 +160,23 @@ class PMAgent:
                     ),
                 )
 
+                try:
+                    await workflow.execute_activity(
+                        "db_patch_task_meta",
+                        args=[
+                            parent_task_id,
+                            json.dumps(build_hitl_meta_patch(
+                                "pm_clarification",
+                                summary or "PM needs clarification before planning.",
+                                clarification_wf_id,
+                                questions=questions or None,
+                            )),
+                        ],
+                        **META_OPTIONS,
+                    )
+                except Exception:
+                    pass
+
                 log.info("pm_waiting_for_clarification", questions=len(questions))
                 answers: dict = await workflow.execute_child_workflow(
                     ClarificationWorkflow.run,
@@ -169,6 +187,15 @@ class PMAgent:
                     parent_close_policy=ParentClosePolicy.TERMINATE,
                 )
                 clarifications = answers
+
+                try:
+                    await workflow.execute_activity(
+                        "db_patch_task_meta",
+                        args=[parent_task_id, json.dumps({"pending_hitl_remove": clarification_wf_id})],
+                        **META_OPTIONS,
+                    )
+                except Exception:
+                    pass
 
                 # Emit resolved message
                 await adk.messages.create(

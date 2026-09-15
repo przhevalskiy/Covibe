@@ -1,5 +1,5 @@
 """
-Repository preparation — clone, init, or auto-create GitHub repo.
+Repository preparation — clone linked GitHub repos or init a local workspace.
 
 Extracted from workflows/swarm_orchestrator.py. Call from the Foreman workflow
 with run_activity / post_message bound to workflow.execute_activity and adk.messages.
@@ -7,7 +7,6 @@ with run_activity / post_message bound to workflow.execute_activity and adk.mess
 from __future__ import annotations
 
 import json
-from pathlib import Path
 from typing import Awaitable, Callable
 
 
@@ -69,34 +68,6 @@ async def prepare_repository(
         ],
     )
 
-    if effective_token and project_id:
-        project_name = Path(repo_path).name
-        await post_message(f"[Foreman] Creating GitHub repository '{project_name}'...")
-
-        create_json = await run_activity(
-            "swarm_github_create_repo",
-            [project_name, effective_token, True],
-        )
-        try:
-            create_result = json.loads(create_json)
-        except Exception:
-            create_result = {"ok": False, "message": create_json}
-
-        if create_result.get("ok"):
-            github_url = create_result["github_url"]
-            await run_activity(
-                "swarm_git_configure_remote",
-                [repo_path, effective_token, github_url],
-            )
-            await run_activity(
-                "swarm_update_project_registry",
-                [project_id, github_url],
-            )
-            await post_message(f"[Foreman] ✓ GitHub repo created: {github_url}")
-        else:
-            await post_message(
-                f"[Foreman] ⚠ Could not create GitHub repo: "
-                f"{create_result.get('message', '')} — continuing with local build."
-            )
-
+    # Greenfield workspaces stay local until the user links GitHub on the workspace.
+    # Do not auto-create a remote repo just because a token is configured.
     return repo_path, github_url, None
