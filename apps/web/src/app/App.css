@@ -1,9 +1,9 @@
-/* App Layout */
+/* App Layout — see design/shellInvariants.ts */
 .app-layout {
   display: flex;
   height: 100vh;
   width: 100%;
-  background-color: var(--color-white);
+  background: var(--shell-gradient, var(--shell-bg));
 }
 
 .app-main {
@@ -12,25 +12,28 @@
   flex-direction: column;
   min-width: 0;
   min-height: 0;
-  overflow-x: hidden;
-  overflow-y: auto;
-}
-
-/* Chat and run IDE manage their own scroll */
-.app-main:has(.chat-area),
-.app-main:has(.run-ide) {
   overflow: hidden;
 }
 
-/* ===== MOBILE RESPONSIVE ===== */
-@media (max-width: 768px) {
-  /* On mobile, app-main takes full width since sidebar is overlay */
-  .app-main {
-    width: 100%;
-    margin-left: 0;
-  }
+.app-main .app-panel {
+  flex: 1;
+}
 
-  /* Add padding-top for mobile hamburger button */
+/* Chat and run IDE manage their own scroll inside the panel */
+.app-panel-inner:has(.run-ide),
+.app-panel-inner:has(.chat-area) {
+  overflow: hidden;
+}
+
+.auth-loading {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 100vh;
+  background: var(--shell-gradient, var(--shell-bg));
+}
+
+@media (max-width: 768px) {
   .app-layout {
     position: relative;
   }

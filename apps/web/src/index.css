@@ -4,6 +4,7 @@
    ============================================ */
 
 @import url('https://fonts.googleapis.com/css2?family=Albert+Sans:wght@400;500;600;700&display=swap');
+@import './design/tokens.css';
 
 /* CSS Variables */
 :root {
@@ -25,12 +26,7 @@
   --gray-800: #1f2937;
   --gray-900: #111827;
 
-  /* Brand */
-  --brand-50: #eff6ff;
-  --brand-100: #dbeafe;
-  --brand-500: #3b82f6;
-  --brand-600: #2563eb;
-  --brand-700: #1d4ed8;
+  /* Brand aliases live in design/tokens.css */
 
   /* Semantic */
   --color-error: #ef4444;
@@ -55,8 +51,14 @@
   --breakpoint-lg: 1024px;
   --breakpoint-xl: 1280px;
 
-  /* Mobile-specific */
-  --mobile-padding: 16px;
+  /* Legacy feed tokens (former ui/) */
+  --text-primary: var(--gray-900);
+  --text-secondary: var(--gray-600);
+  --surface: var(--color-white);
+  --surface-raised: var(--gray-50);
+  --border: var(--gray-200);
+  --border-light: var(--gray-200);
+  --success: var(--color-success);
   --mobile-gap: 12px;
   --tap-target-min: 44px;  /* Minimum touch target size */
 }
@@ -77,7 +79,7 @@ body {
   font-size: 14px;
   line-height: 1.5;
   color: var(--gray-900);
-  background-color: var(--color-white);
+  background: var(--shell-gradient, var(--shell-bg));
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
 }

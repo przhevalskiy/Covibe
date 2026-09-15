@@ -1,9 +1,11 @@
 import { useEffect, useState } from 'react';
 import { BrowserRouter, Navigate, Route, Routes, useParams } from 'react-router-dom';
 import { Sidebar } from '@/components/layout/Sidebar';
+import { AppPanel } from '@/components/shell/AppPanel';
 import { WorkspacesPage, WorkspaceDetailPage } from '@/features/projects';
 import { TemplatesPage } from '@/features/templates';
 import { AgentsPage } from '@/features/agents';
+import { DeveloperPage } from '@/features/developer';
 import { RunIdePage, RunsPage } from '@/features/runs';
 import { useAuthStore, AuthModal } from '@/features/auth';
 import './App.css';
@@ -19,7 +21,8 @@ function AppLayout() {
     <div className="app-layout">
       <Sidebar />
       <main className="app-main">
-        <Routes>
+        <AppPanel>
+          <Routes>
           <Route path="/" element={<Navigate to="/runs/new" replace />} />
           <Route path="/runs/new" element={<RunIdePage />} />
           <Route path="/runs/:taskId" element={<RunIdePage />} />
@@ -33,8 +36,10 @@ function AppLayout() {
           <Route path="/starters" element={<TemplatesPage />} />
           <Route path="/templates" element={<Navigate to="/starters" replace />} />
           <Route path="/agents" element={<AgentsPage />} />
+          <Route path="/developer" element={<DeveloperPage />} />
           <Route path="/runs" element={<RunsPage />} />
-        </Routes>
+          </Routes>
+        </AppPanel>
       </main>
     </div>
   );

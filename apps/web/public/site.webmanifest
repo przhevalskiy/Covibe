@@ -1,7 +1,7 @@
 {
   "name": "Gantry",
   "short_name": "Gantry",
-  "description": "Marketing & Communications intake assistant",
+  "description": "Async code-agent factory control plane",
   "icons": [
     {
       "src": "/favicon-192x192.png",
@@ -14,7 +14,7 @@
       "type": "image/png"
     }
   ],
-  "theme_color": "#ffffff",
-  "background_color": "#ffffff",
+  "theme_color": "#f5f3ff",
+  "background_color": "#f5f3ff",
   "display": "standalone"
 }

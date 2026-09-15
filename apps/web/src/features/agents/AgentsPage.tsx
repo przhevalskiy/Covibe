@@ -22,7 +22,7 @@ import {
   FACTORY_CAPABILITIES,
   RUN_SIZE_OPTIONS,
 } from '@/shared/constants/runConfig';
-import { usePlaybookStore } from '@/features/playbooks';
+import { usePlaybookOptions, usePlaybookStore } from '@/features/playbooks';
 import {
   DISABLEABLE_AGENTS,
   getPipelineDefaults,
@@ -72,7 +72,7 @@ export function AgentsPage() {
   const [defaults, setDefaults] = useState<PipelineDefaults>(() => getPipelineDefaults());
   const [saved, setSaved] = useState(false);
   const [showAdvanced, setShowAdvanced] = useState(false);
-  const playbookOptions = usePlaybookStore(s => s.asOptions());
+  const playbookOptions = usePlaybookOptions();
   const fetchPlaybooks = usePlaybookStore(s => s.fetchPlaybooks);
   const hintFor = usePlaybookStore(s => s.hintFor);
 
