@@ -2,10 +2,13 @@ import { StrictMode } from 'react'
 import { createRoot } from 'react-dom/client'
 import './index.css'
 import App from '@/app/App'
+import { assertProductionDeployEnv } from '@/deploy'
 import { getOpenUxGaps, getDeferredUxGaps } from '@/shared/gantry/uxGaps'
 import { useWorkspaceStore } from '@/features/workspace'
 import { useWorkspaceCatalogStore } from '@/features/projects'
 import { usePlaybookStore } from '@/features/playbooks'
+
+assertProductionDeployEnv()
 
 useWorkspaceStore.getState().hydrate()
 void Promise.all([
