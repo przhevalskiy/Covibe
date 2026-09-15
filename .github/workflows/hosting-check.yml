@@ -34,8 +34,8 @@ jobs:
         run: |
           test -f vercel.json
           test -f src/deploy/invariants.ts
-          test -f ../docs/hosting/PLAN.md
-          rg '"destination": "/index.html"' vercel.json
+          test -f ../../docs/hosting/PLAN.md
+          grep -F '"destination": "/index.html"' vercel.json
 
   api-cors:
     name: API CORS config
@@ -48,7 +48,7 @@ jobs:
           python-version: '3.12'
 
       - name: Install API deps
-        run: pip install -q python-dotenv structlog fastapi
+        run: pip install -q pytest python-dotenv
 
       - name: pytest CORS
         run: python -m pytest tests/test_cors_config.py -q
