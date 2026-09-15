@@ -1,7 +1,6 @@
 import { useEffect, useState, useRef, useMemo } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import {
-  SquarePen,
   Settings,
   User,
   LogOut,
@@ -14,19 +13,20 @@ import {
   LayoutTemplate,
   Bot,
   PlayCircle,
-  Sparkles,
   Globe,
   Check,
   MessageCirclePlus,
+  Plus,
+  BookOpen,
 } from 'lucide-react';
 import { getAvatarIcon } from '@/shared/constants/avatarIcons';
+import { ChibiAvatar } from '@/components/chibi/ChibiAvatar';
 import { useDiscussionStore } from '@/features/discussions';
 import { useWorkspaceCatalogStore } from '@/features/projects';
 import { useChatStore } from '@/features/chat';
+import { useRunLaunchStore } from '@/features/runs/runLaunchStore';
 import { useAuthStore } from '@/features/auth';
-import { SampleQuestionsDropdown } from './SampleQuestionsDropdown';
 import { AccountSettingsModal } from './AccountSettingsModal';
-import { TRACK_STARTERS } from '@/shared/constants/sampleQuestions';
 import { useTaskList } from '@/shared/hooks/useTaskList';
 import type { GantryTaskSummary } from '@/shared/services/gantry/client';
 import { useWorkspaceStore, tasksForWorkspace } from '@/features/workspace';
@@ -38,19 +38,22 @@ export function Sidebar() {
   const [isCollapsed, setIsCollapsed] = useState(false);
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
   const [showSettingsMenu, setShowSettingsMenu] = useState(false);
-  const [showSampleQuestions, setShowSampleQuestions] = useState(false);
   const [showAccountSettings, setShowAccountSettings] = useState(false);
   const [showLanguageMenu, setShowLanguageMenu] = useState(false);
   const settingsMenuRef = useRef<HTMLDivElement>(null);
-  const sampleQuestionsRef = useRef<HTMLDivElement>(null);
 
   const { linkTaskToDiscussion, setActiveDiscussionId } = useDiscussionStore();
-  const { fetchWorkspaces } = useWorkspaceCatalogStore();
+  const { fetchWorkspaces, workspaces } = useWorkspaceCatalogStore();
   const { clearMessages } = useChatStore();
   const { user, signOut } = useAuthStore();
   const { tasks, isLoading: tasksLoading, refresh: refreshTasks } = useTaskList(true);
   const activeWorkspaceId = useWorkspaceStore((s) => s.activeWorkspaceId);
   const hydrateWorkspace = useWorkspaceStore((s) => s.hydrate);
+  const activeWorkspace = useMemo(
+    () => workspaces.find((w) => w.id === activeWorkspaceId),
+    [workspaces, activeWorkspaceId],
+  );
+  const runsSectionTitle = activeWorkspace?.name ?? 'Recent runs';
   const workspaceTasks = useMemo(
     () => tasksForWorkspace(tasks, activeWorkspaceId),
     [tasks, activeWorkspaceId],
@@ -93,30 +96,11 @@ export function Sidebar() {
     }
   }, [showSettingsMenu]);
 
-  useEffect(() => {
-    const handleClickOutside = (event: MouseEvent) => {
-      const target = event.target as Node;
-      const isInsideContainer = sampleQuestionsRef.current?.contains(target);
-      const isInsideMenu = (target as Element).closest?.('.sample-questions-dropdown-menu');
-      if (!isInsideContainer && !isInsideMenu) setShowSampleQuestions(false);
-    };
-    if (showSampleQuestions) {
-      document.addEventListener('mousedown', handleClickOutside);
-      return () => document.removeEventListener('mousedown', handleClickOutside);
-    }
-  }, [showSampleQuestions]);
-
   const handleNewRun = () => {
     clearMessages();
     setActiveDiscussionId(null);
+    useRunLaunchStore.getState().reset();
     navigate('/runs/new');
-  };
-
-  const handleSampleQuestionSelect = (question: string) => {
-    setShowSampleQuestions(false);
-    clearMessages();
-    setActiveDiscussionId(null);
-    navigate('/runs/new', { state: { initialMessage: question } });
   };
 
   const handleLogout = async () => {
@@ -128,6 +112,8 @@ export function Sidebar() {
     ? location.pathname.split('/')[2]
     : null;
   const isComposeActive = location.pathname === '/runs/new';
+
+  const toggleCollapsed = () => setIsCollapsed((prev) => !prev);
 
   return (
     <>
@@ -149,25 +135,40 @@ export function Sidebar() {
       >
         <div className="sidebar-header">
           <div className="sidebar-logo">
+            <ChibiAvatar role="foreman" size={32} motion="still" />
             {!isCollapsed && <span className="sidebar-logo-wordmark">Gantry</span>}
           </div>
           <button
-            onClick={() => setIsCollapsed(!isCollapsed)}
+            type="button"
+            onClick={toggleCollapsed}
             className="sidebar-collapse-btn"
             title={isCollapsed ? 'Expand sidebar' : 'Collapse sidebar'}
+            aria-label={isCollapsed ? 'Expand sidebar' : 'Collapse sidebar'}
           >
             {isCollapsed ? <PanelLeft size={18} /> : <PanelLeftClose size={18} />}
           </button>
         </div>
 
-        <div className="sidebar-nav-links">
+        <button
+          type="button"
+          className="sidebar-resize-handle"
+          onClick={toggleCollapsed}
+          aria-label={isCollapsed ? 'Expand sidebar' : 'Collapse sidebar'}
+          title={isCollapsed ? 'Expand sidebar' : 'Collapse sidebar'}
+        />
+
+        <div className="sidebar-actions">
           <button
+            type="button"
+            className={`sidebar-new-run-btn ${isComposeActive ? 'active' : ''}`}
             onClick={handleNewRun}
-            className={`sidebar-nav-link ${isComposeActive ? 'active' : ''}`}
           >
-            <SquarePen size={18} />
+            <Plus size={18} strokeWidth={2.5} />
             {!isCollapsed && <span>New run</span>}
           </button>
+        </div>
+
+        <div className="sidebar-nav-links">
           <button
             className={`sidebar-nav-link ${location.pathname.startsWith('/workspaces') ? 'active' : ''}`}
             onClick={() => navigate('/workspaces')}
@@ -199,8 +200,12 @@ export function Sidebar() {
 
         {!isCollapsed && (
           <div className="conversations-header" style={{ margin: '12px 0 4px', padding: '0 8px' }}>
-            <h3 className="sidebar-section-title" style={{ margin: 0 }}>
-              {activeWorkspaceId ? 'Workspace runs' : 'Recent runs'}
+            <h3
+              className="sidebar-section-title sidebar-section-title--runs"
+              style={{ margin: 0 }}
+              title={runsSectionTitle}
+            >
+              {runsSectionTitle}
             </h3>
           </div>
         )}
@@ -211,32 +216,7 @@ export function Sidebar() {
               <div className="spinner" />
             </div>
           ) : (
-            <>
-              <div className="sidebar-journey-section">
-                <div className="sidebar-journey-normal">
-                  <div className="sidebar-start-journey-container" ref={sampleQuestionsRef}>
-                    <button
-                      className="sidebar-start-journey-btn"
-                      onClick={() => setShowSampleQuestions(!showSampleQuestions)}
-                    >
-                      <Sparkles size={16} />
-                      <span>Quick start</span>
-                    </button>
-                    <SampleQuestionsDropdown
-                      isOpen={showSampleQuestions}
-                      onToggle={() => setShowSampleQuestions(!showSampleQuestions)}
-                      onQuestionSelect={handleSampleQuestionSelect}
-                      questions={TRACK_STARTERS}
-                      isCollapsed={isCollapsed}
-                    />
-                  </div>
-                </div>
-              </div>
-
-              <div className="conversation-group-list">
-                {workspaceTasks.length > 0 && !isCollapsed && (
-                  <p className="sidebar-list-label">Runs</p>
-                )}
+            <div className="conversation-group-list">
                 {workspaceTasks.map((task) => (
                   <TaskSidebarItem
                     key={task.task_id}
@@ -249,15 +229,24 @@ export function Sidebar() {
                     }}
                   />
                 ))}
-                {!tasksLoading && workspaceTasks.length === 0 && !isCollapsed && (
-                  <p className="sidebar-empty-tasks">No runs in this workspace yet</p>
-                )}
-              </div>
-            </>
+              {!tasksLoading && workspaceTasks.length === 0 && !isCollapsed && (
+                <p className="sidebar-empty-tasks">No runs in this workspace yet</p>
+              )}
+            </div>
           )}
         </div>
 
         <div className="sidebar-footer">
+          <button
+            type="button"
+            className={`sidebar-api-docs-link ${location.pathname === '/developer' ? 'active' : ''}`}
+            onClick={() => navigate('/developer')}
+            title="Gantry API overview"
+          >
+            <BookOpen size={18} />
+            {!isCollapsed && <span>API Docs</span>}
+          </button>
+
           <div className="sidebar-user">
             <div className="sidebar-user-avatar">
               {(() => {
