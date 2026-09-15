@@ -6,14 +6,16 @@ import './RunComposePanel.css';
 
 interface RunComposePanelProps {
   workspace?: Project | null;
+  layout?: 'panel' | 'centered';
 }
 
-export function RunComposePanel({ workspace }: RunComposePanelProps) {
+export function RunComposePanel({ workspace, layout = 'panel' }: RunComposePanelProps) {
   const location = useLocation();
   const initialMessage = (location.state as { initialMessage?: string } | null)?.initialMessage;
+  const centered = layout === 'centered';
 
   return (
-    <div className="run-compose-panel">
+    <div className={`run-compose-panel ${centered ? 'run-compose-panel--centered' : ''}`}>
       {workspace?.instructions && (
         <div className="run-compose-brief">
           <strong>Workspace brief</strong>
@@ -26,7 +28,7 @@ export function RunComposePanel({ workspace }: RunComposePanelProps) {
       </div>
 
       <div className="run-compose-input">
-        <ChatInput initialValue={initialMessage} />
+        <ChatInput initialValue={initialMessage ?? ''} />
       </div>
     </div>
   );

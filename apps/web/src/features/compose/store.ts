@@ -78,8 +78,13 @@ export const useRunComposeStore = create<RunComposeStore>((set, get) => ({
   },
 
   applyProfile: (patch) => {
-    const current = getPipelineDefaults();
-    const next = { ...current, ...patch };
+    const stored = getPipelineDefaults();
+    const current = get();
+    const next: PipelineDefaults = {
+      ...stored,
+      tier: patch.tier ?? current.tier,
+      playbook: patch.playbook !== undefined ? patch.playbook : current.playbook,
+    };
     savePipelineDefaults(next);
     set({ tier: next.tier, playbook: next.playbook });
   },

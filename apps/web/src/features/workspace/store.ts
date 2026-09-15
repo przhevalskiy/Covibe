@@ -8,6 +8,8 @@ import { gantryClient } from '@/shared/services/gantry/client';
 
 interface WorkspaceState {
   activeWorkspaceId: string | null;
+  /** Bumps on every workspace switch so compose UI can refresh reliably. */
+  workspaceRevision: number;
 }
 
 interface WorkspaceActions {
@@ -21,12 +23,16 @@ type WorkspaceStore = WorkspaceState & WorkspaceActions;
 
 export const useWorkspaceStore = create<WorkspaceStore>((set, get) => ({
   activeWorkspaceId: loadActiveWorkspaceId(),
+  workspaceRevision: 0,
 
   hydrate: () => set({ activeWorkspaceId: loadActiveWorkspaceId() }),
 
   setActiveWorkspace: (id) => {
     saveActiveWorkspaceId(id);
-    set({ activeWorkspaceId: id });
+    set((state) => ({
+      activeWorkspaceId: id,
+      workspaceRevision: state.workspaceRevision + 1,
+    }));
     window.dispatchEvent(
       new CustomEvent('gantry:workspace-changed', { detail: { workspace_id: id } }),
     );
