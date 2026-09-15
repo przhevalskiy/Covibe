@@ -152,6 +152,11 @@ export const gantryClient = {
       body: JSON.stringify(body),
     }).then(r => r.workspace),
 
+  deleteWorkspace: (id: string) =>
+    request<{ deleted: string }>(`/v1/workspaces/${encodeURIComponent(id)}`, {
+      method: 'DELETE',
+    }),
+
   /** @deprecated Use listWorkspaces */
   listProjects: () =>
     request<{ workspaces: GantryWorkspace[] }>('/v1/workspaces').then(r => r.workspaces),
@@ -318,7 +323,13 @@ export const gantryClient = {
 
   hitl: (
     taskId: string,
-    body: { checkpoint: string; workflow_id: string; approved?: boolean },
+    body: {
+      checkpoint: string;
+      workflow_id: string;
+      approved?: boolean;
+      signal?: string;
+      payload?: boolean | Record<string, unknown>;
+    },
   ) =>
     request<{ ok: boolean }>(`/v1/tasks/${encodeURIComponent(taskId)}/hitl`, {
       method: 'POST',
@@ -374,7 +385,7 @@ export type GantryTask = {
   autonomy_level?: string | null;
   playbook?: string | null;
   track_warnings?: string[];
-  pending_hitl?: Array<{ checkpoint: string; workflow_id: string; description?: string }>;
+  pending_hitl?: Array<{ checkpoint: string; workflow_id: string; description?: string; questions?: string[] }>;
   created_at?: string;
   updated_at?: string;
   result?: { pr_url?: string; branch?: string } | null;

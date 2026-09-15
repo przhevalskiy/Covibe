@@ -1,12 +1,13 @@
 import { useEffect, useState, useCallback, useMemo } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { ArrowLeft, ArrowUp, Pencil, FolderKanban, CalendarClock, PlayCircle } from 'lucide-react';
+import { ArrowLeft, ArrowUp, Pencil, FolderKanban, CalendarClock, PlayCircle, Trash2 } from 'lucide-react';
 import type { Workspace } from '@/shared/types';
 import { projectRepoHint, projectRepoLabel } from '@/shared/constants/requestTypes';
 import { api } from '@/shared/services/api';
 import { useWorkspaceStore, tasksForWorkspace } from '@/features/workspace';
 import { useTaskList } from '@/shared/hooks/useTaskList';
 import { useWorkspaceCatalogStore } from '../store';
+import { confirmDeleteWorkspace } from '../workspaceDelete';
 import { CreateWorkspaceModal } from './CreateProjectModal';
 import { ProjectFilesPanel } from './ProjectFilesPanel';
 import { WorkspaceSkillsPanel } from '@/features/playbooks';
@@ -15,12 +16,13 @@ import './ProjectDetailPage.css';
 export function WorkspaceDetailPage() {
   const { workspaceId } = useParams<{ workspaceId: string }>();
   const navigate = useNavigate();
-  const { getWorkspaceById } = useWorkspaceCatalogStore();
+  const { getWorkspaceById, deleteWorkspace } = useWorkspaceCatalogStore();
 
   const [workspace, setWorkspace] = useState<Workspace | null>(null);
   const [taskInput, setTaskInput] = useState('');
   const [showEdit, setShowEdit] = useState(false);
   const [notFound, setNotFound] = useState(false);
+  const [deleting, setDeleting] = useState(false);
   const setActiveWorkspace = useWorkspaceStore((s) => s.setActiveWorkspace);
   const { tasks, isLoading: tasksLoading } = useTaskList(true);
   const workspaceRuns = useMemo(
@@ -50,6 +52,19 @@ export function WorkspaceDetailPage() {
     const text = (message ?? taskInput).trim();
     setActiveWorkspace(workspaceId);
     navigate('/runs/new', text ? { state: { initialMessage: text } } : undefined);
+  };
+
+  const handleDelete = async () => {
+    if (!workspace) return;
+    if (!confirmDeleteWorkspace(workspace.name)) return;
+    setDeleting(true);
+    try {
+      await deleteWorkspace(workspace.id);
+      navigate('/workspaces');
+    } catch (error) {
+      window.alert((error as Error).message);
+      setDeleting(false);
+    }
   };
 
   if (notFound) {
@@ -84,6 +99,14 @@ export function WorkspaceDetailPage() {
             </div>
             <button className="pd-edit-btn" onClick={() => setShowEdit(true)} title="Edit workspace">
               <Pencil size={16} />
+            </button>
+            <button
+              className="pd-delete-btn"
+              onClick={() => void handleDelete()}
+              disabled={deleting}
+              title="Delete workspace"
+            >
+              <Trash2 size={16} />
             </button>
           </div>
 

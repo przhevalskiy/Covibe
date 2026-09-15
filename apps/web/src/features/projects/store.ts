@@ -6,6 +6,7 @@ import {
   Discussion,
 } from '@/shared/types';
 import { api } from '@/shared/services/api';
+import { clearActiveWorkspaceIfDeleted } from './workspaceDelete';
 
 interface WorkspaceCatalogState {
   workspaces: Workspace[];
@@ -69,6 +70,7 @@ export const useWorkspaceCatalogStore = create<WorkspaceCatalogStore>((set, get)
     set({ isLoading: true, error: null });
     try {
       await api.deleteWorkspace(id);
+      clearActiveWorkspaceIfDeleted(id);
       set(state => ({
         workspaces: state.workspaces.filter(w => w.id !== id),
         isLoading: false,

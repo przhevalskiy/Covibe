@@ -106,6 +106,26 @@
 
 .pd-edit-btn:hover { background: var(--gray-50); color: var(--gray-800); }
 
+.pd-delete-btn {
+  background: none;
+  border: 1px solid var(--gray-200);
+  border-radius: 8px;
+  padding: 7px;
+  color: var(--gray-500);
+  cursor: pointer;
+}
+
+.pd-delete-btn:hover:not(:disabled) {
+  background: #fef2f2;
+  border-color: #fecaca;
+  color: #dc2626;
+}
+
+.pd-delete-btn:disabled {
+  opacity: 0.6;
+  cursor: wait;
+}
+
 /* Start a task input */
 .pd-task-input {
   display: flex;

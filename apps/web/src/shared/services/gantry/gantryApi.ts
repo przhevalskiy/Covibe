@@ -125,8 +125,8 @@ export class GantryApiService {
     return this.updateWorkspace(id, data);
   }
 
-  async deleteWorkspace(_id: string): Promise<void> {
-    throw new Error('Workspace delete is not available via /v1/workspaces yet');
+  async deleteWorkspace(id: string): Promise<void> {
+    await gantryClient.deleteWorkspace(id);
   }
 
   /** @deprecated Use deleteWorkspace */

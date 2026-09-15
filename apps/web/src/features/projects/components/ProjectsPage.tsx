@@ -1,18 +1,20 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { FolderKanban, Plus } from 'lucide-react';
+import { FolderKanban, Plus, Trash2 } from 'lucide-react';
 import { useAuthStore } from '@/features/auth';
-import { projectRepoHint, projectRepoLabel } from '@/shared/constants/requestTypes';
+import { projectRepoLabel } from '@/shared/constants/requestTypes';
 import type { Workspace } from '@/shared/types';
 import { useWorkspaceCatalogStore } from '../store';
+import { confirmDeleteWorkspace } from '../workspaceDelete';
 import { CreateWorkspaceModal } from './CreateProjectModal';
 import './ProjectsPage.css';
 
 export function WorkspacesPage() {
   const navigate = useNavigate();
   const { user } = useAuthStore();
-  const { workspaces, isLoading, fetchWorkspaces } = useWorkspaceCatalogStore();
+  const { workspaces, isLoading, fetchWorkspaces, deleteWorkspace } = useWorkspaceCatalogStore();
   const [showCreate, setShowCreate] = useState(false);
+  const [deletingId, setDeletingId] = useState<string | null>(null);
 
   useEffect(() => {
     if (user) fetchWorkspaces();
@@ -22,6 +24,18 @@ export function WorkspacesPage() {
     () => workspaces.filter(w => !w.parent_workspace_id && !w.parent_project_id),
     [workspaces],
   );
+
+  const handleDelete = async (workspace: Workspace) => {
+    if (!confirmDeleteWorkspace(workspace.name)) return;
+    setDeletingId(workspace.id);
+    try {
+      await deleteWorkspace(workspace.id);
+    } catch (error) {
+      window.alert((error as Error).message);
+    } finally {
+      setDeletingId(null);
+    }
+  };
 
   return (
     <div className="projects-page">
@@ -56,7 +70,9 @@ export function WorkspacesPage() {
             <WorkspaceCard
               key={workspace.id}
               workspace={workspace}
+              deleting={deletingId === workspace.id}
               onOpen={id => navigate(`/workspaces/${id}`)}
+              onDelete={() => void handleDelete(workspace)}
             />
           ))}
         </div>
@@ -71,9 +87,30 @@ export function WorkspacesPage() {
   );
 }
 
-function WorkspaceCard({ workspace, onOpen }: { workspace: Workspace; onOpen: (id: string) => void }) {
+function WorkspaceCard({
+  workspace,
+  deleting,
+  onOpen,
+  onDelete,
+}: {
+  workspace: Workspace;
+  deleting?: boolean;
+  onOpen: (id: string) => void;
+  onDelete: () => void;
+}) {
   return (
-    <div className="project-card" onClick={() => onOpen(workspace.id)} role="button" tabIndex={0}>
+    <div
+      className="project-card"
+      onClick={() => onOpen(workspace.id)}
+      onKeyDown={(e) => {
+        if (e.key === 'Enter' || e.key === ' ') {
+          e.preventDefault();
+          onOpen(workspace.id);
+        }
+      }}
+      role="button"
+      tabIndex={0}
+    >
       <div className="project-card-icon"><FolderKanban size={20} /></div>
       <div className="project-card-body">
         <h3 className="project-card-name">{workspace.name}</h3>
@@ -82,6 +119,18 @@ function WorkspaceCard({ workspace, onOpen }: { workspace: Workspace; onOpen: (i
         )}
         <span className="project-card-type">{projectRepoLabel(workspace)}</span>
       </div>
+      <button
+        type="button"
+        className="project-card-delete"
+        title="Delete workspace"
+        disabled={deleting}
+        onClick={(e) => {
+          e.stopPropagation();
+          onDelete();
+        }}
+      >
+        <Trash2 size={15} />
+      </button>
     </div>
   );
 }
