@@ -227,7 +227,13 @@ export const useChatStore = create<ChatStore>((set, get) => ({
 
   setActiveTaskId: (taskId: string | null) => set({ activeTaskId: taskId }),
 
-  clearMessages: () => set({ messages: [], error: null, persistedIntent: null, activeTaskId: null }),
+  clearMessages: () => set({
+    messages: [],
+    error: null,
+    persistedIntent: null,
+    activeTaskId: null,
+    isSubmitted: false,
+  }),
 
   clearError: () => set({ error: null }),
 
