@@ -1,3 +1,4 @@
+import { useMemo } from 'react';
 import { create } from 'zustand';
 import type { Playbook, PlaybookCreate } from '@/shared/types';
 import { gantryClient } from '@/shared/services/gantry/client';
@@ -95,3 +96,12 @@ export const usePlaybookStore = create<PlaybookStore>((set, get) => ({
     return row ? toOption(row).hint : undefined;
   },
 }));
+
+/** Stable playbook options for selectors — avoids re-render loops from asOptions(). */
+export function usePlaybookOptions(): PlaybookOption[] {
+  const playbooks = usePlaybookStore((s) => s.playbooks);
+  return useMemo(
+    () => [GENERAL_OPTION, ...playbooks.map(toOption)],
+    [playbooks],
+  );
+}

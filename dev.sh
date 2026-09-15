@@ -176,6 +176,7 @@ ok "Agent running"
 header "Starting Gantry API"
 
 export GANTRY_DEV_AUTH_BYPASS="${GANTRY_DEV_AUTH_BYPASS:-true}"
+export GANTRY_AGENT_NAME="${GANTRY_AGENT_NAME:-swarm-factory}"
 
 .venv/bin/python -m uvicorn api.main:app \
   --host 0.0.0.0 \
